@@ -72,7 +72,7 @@ page = st.sidebar.radio(
     [
         "🏠 Início",
         "🧹 Pré-processamento de Dados",
-        "🧪Engenharia de Variáveis",
+        "🧪 Engenharia de Variáveis",
         "📊 Análise Exploratória",
         "📈 Modelagem Estatística",
         "🤖 Machine Learning",
