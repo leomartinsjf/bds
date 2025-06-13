@@ -72,14 +72,14 @@ page = st.sidebar.radio(
     [
         "🏠 Início",
         "🧹 Pré-processamento de Dados",
-        "🧩Engenharia de Variáveis",
+        "🧪Engenharia de Variáveis",
         "📊 Análise Exploratória",
         "📈 Modelagem Estatística",
         "🤖 Machine Learning",
-        "🎲 Análise Bayesiana",
-        "🧱 Multinível Nível 3",
+        "🔬 Análise Bayesiana",
+        "📚 Multinível Nível 3",
         "🔀 Multinível Não Hierárquico",
-        "🕸️ Modelo L4",
+        "🔷 Modelo L4",
         "📤 Exportar"
 
     ]
@@ -112,8 +112,8 @@ elif page == "🧹 Pré-processamento de Dados":
     else:
         st.warning("Nenhum dado carregado. Por favor, faça upload de um arquivo válido antes de iniciar o pré-processamento.")
 
-elif page == "🧩 Engenharia de Variáveis":
-    st.header("🧩 Engenharia de Variáveis")
+elif page == "🧪 Engenharia de Variáveis":
+    st.header("🧪 Engenharia de Variáveis")
     if st.session_state.get("df_loaded_for_processing"):
         df_new = show_feature_engineering()
         if isinstance(df_new, pd.DataFrame):
@@ -149,21 +149,21 @@ elif page == "🤖 Machine Learning":
     else:
         st.warning("Nenhum dado processado disponível para machine learning. Por favor, carregue e processe os dados primeiro.")
 
-elif page == " 🎲 Análise Bayesiana":
-    st.header("🎲 Análise Bayesiana")
+elif page == "🔬 Análise Bayesiana":
+    st.header("🔬 Análise Bayesiana")
     if isinstance(st.session_state.get("df_processed"), pd.DataFrame):
         show_bayesian_analysis_page(st.session_state["df_processed"])
     else:
         st.warning("Por favor, carregue e processe os dados antes de acessar esta seção.")
 
 
-elif page == "🧱 Multinível Nível 3":
+elif page == "📚 Multinível Nível 3":
     show_multilevel_model_lvl3_full()
 
 elif page == "🔀 Multinível Não Hierárquico":
     show_multilevel_model_cross()
 
-elif page == "🕸️ Modelo L4":
+elif page == "🔷 Modelo L4":
     show_l4_model()
 
 elif page == "📤 Exportar":
