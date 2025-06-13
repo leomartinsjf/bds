@@ -26,6 +26,35 @@ from model_l4_extended import show_l4_model
 
 
 
+
+# 🔧 Função de reset dos campos interativos de engenharia
+def reset_feature_engineering_keys():
+    """Zera campos interativos da seção de engenharia de fatores e outros estados temporários após novo carregamento."""
+    substrings_to_clear = [
+        "transform_to_cat_col_select",
+        "new_categorical_col_name_input",
+        "map_",
+        "remove_original_col_checkbox_final",
+        "selected_cols_for_ops_multiselect",
+        "select_all_for_ops_checkbox",
+        "apply_categorical_transform_button",
+        "rename_",
+        "duplicate_",
+    ]
+
+    keys_to_reset = [
+        key for key in st.session_state.keys()
+        if any(sub in key for sub in substrings_to_clear)
+    ]
+
+    for key in keys_to_reset:
+        del st.session_state[key]
+
+    for flag in ["run_feature_engineering_rerun", "feature_engineered_flag"]:
+        if flag in st.session_state:
+            del st.session_state[flag]
+
+
 # --- Inicialização do session_state ---
 default_state = {
     "df_original": None,
@@ -55,6 +84,7 @@ if uploaded_file:
             st.session_state["df_processed"] = df.copy()
             st.session_state["last_uploaded_file_name"] = uploaded_file.name
             st.session_state["df_loaded_for_processing"] = True
+            reset_feature_engineering_keys()
             st.sidebar.success("Arquivo carregado com sucesso!")
         except Exception as e:
             st.sidebar.error(f"Erro ao carregar arquivo: {e}")

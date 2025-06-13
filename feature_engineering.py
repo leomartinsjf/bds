@@ -58,6 +58,8 @@ def show_feature_engineering():
     df_current_session_copy = st.session_state['df_processed'].copy()
     st.markdown("---")
 
+    st.info("Esta seção permite transformar, modificar, incluir, excluir e renomear as variáveis do dataframe.")
+
     # PAINEL DE REMOÇÃO DE MÚLTIPLAS COLUNAS
     with st.expander("🧹 Remover múltiplas colunas"):
         if len(df_current_session_copy.columns) > 0:
@@ -483,34 +485,46 @@ def show_feature_engineering():
 
     # 11. Transformar Numéricas/Binárias em Categóricas Nomeadas
     with st.expander("🏷️ Transformar Numéricas/Binárias em Categóricas Nomeadas"):
-        st.subheader("Criar Variável Categórica a partir de Numérica/Binária")
-        st.info("Permite converter colunas numéricas (incluindo binárias 0/1) com poucos valores únicos em novas colunas categóricas com nomes personalizados para cada valor.")
+        st.subheader("Criar Variável Categórica a partir de Numérica, Binária ou Categórica")
+        st.info("Permite converter colunas numéricas (incluindo binárias 0/1) e categóricas com poucos valores únicos em novas colunas categóricas com nomes personalizados para cada valor.")
+
         candidate_cols_for_naming = []
         for col in df_current_session_copy.columns:
-            if pd.api.types.is_numeric_dtype(df_current_session_copy[col]):
-                if df_current_session_copy[col].nunique() <= 10 or (df_current_session_copy[col].isin([0, 1]).all() and df_current_session_copy[col].nunique() <= 2):
+            col_series = df_current_session_copy[col].dropna()
+            nunique = col_series.nunique()
+
+            if pd.api.types.is_numeric_dtype(col_series):
+                if nunique <= 10 or (col_series.isin([0, 1]).all() and nunique <= 2):
                     candidate_cols_for_naming.append(col)
-            elif pd.api.types.is_bool_dtype(df_current_session_copy[col]):
+            elif pd.api.types.is_bool_dtype(col_series):
                 candidate_cols_for_naming.append(col)
+            elif pd.api.types.is_categorical_dtype(col_series) or pd.api.types.is_object_dtype(col_series):
+                if nunique <= 10:
+                    candidate_cols_for_naming.append(col)
+
         if not candidate_cols_for_naming:
-            st.info("Nenhuma coluna numérica ou binária adequada encontrada para transformar em categórica nomeada (espera-se 0/1 ou poucos valores únicos).")
+            st.info("Nenhuma coluna adequada encontrada (espera-se numérica/binária/categórica com até 10 valores únicos).")
         else:
             selected_col_for_naming = st.selectbox("Selecione a coluna para transformar:", options=candidate_cols_for_naming, key=key_prefix + "transform_to_cat_col_select")
             if selected_col_for_naming:
                 st.write(f"Valores únicos na coluna '{selected_col_for_naming}': {df_current_session_copy[selected_col_for_naming].dropna().unique().tolist()}")
                 unique_values_to_map = df_current_session_copy[selected_col_for_naming].dropna().unique().tolist()
                 unique_values_to_map.sort()
+
                 st.markdown("#### Mapeamento de Valores para Nova Categoria")
                 mapping = {}
                 new_col_name_for_cat = st.text_input("Nome da Nova Coluna Categórica:", value=f"{selected_col_for_naming}_cat", key=key_prefix + "new_categorical_col_name_input")
+
                 if new_col_name_for_cat and col_exists(df_current_session_copy, new_col_name_for_cat):
                     st.warning(f"O nome '{new_col_name_for_cat}' já existe.")
+
                 cols_map = st.columns(2)
                 for i, val in enumerate(unique_values_to_map):
                     with cols_map[i % 2]:
                         new_category_name = st.text_input(f"Mapear '{val}' para:", key=f"{key_prefix}map_{selected_col_for_naming}_{str(val).replace('.', '_').replace('-', '_')}")
                         if new_category_name:
                             mapping[val] = new_category_name
+
                 if st.button("Aplicar Transformação Categórica", key=key_prefix + "apply_categorical_transform_button"):
                     if not new_col_name_for_cat:
                         st.error("Por favor, forneça um nome para a nova coluna categórica.")
@@ -522,21 +536,26 @@ def show_feature_engineering():
                         try:
                             df_current_session_copy[new_col_name_for_cat] = df_current_session_copy[selected_col_for_naming].map(mapping).astype('category')
                             st.session_state.df_processed = df_current_session_copy
+
                             log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Coluna '{selected_col_for_naming}' transformada para a nova coluna categórica '{new_col_name_for_cat}' com mapeamento {mapping}."
                             st.session_state['feature_engineering_logs'].append(log_message)
+
                             st.success(f"Coluna '{selected_col_for_naming}' transformada para a nova coluna categórica '{new_col_name_for_cat}' com sucesso!")
                             show_col_preview(df_current_session_copy, new_col_name_for_cat)
+
                             if st.checkbox(f"Remover a coluna original '{selected_col_for_naming}' após a transformação?", key=key_prefix + "remove_original_col_checkbox_final"):
                                 df_current_session_copy.drop(columns=[selected_col_for_naming], inplace=True)
                                 log_message_remove = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Coluna original '{selected_col_for_naming}' removida após transformação categórica."
                                 st.session_state['feature_engineering_logs'].append(log_message_remove)
                                 st.session_state.df_processed = df_current_session_copy
                                 st.info(f"Coluna original '{selected_col_for_naming}' removida.")
+
                             feature_engineered_flag = True
                             st.session_state['run_feature_engineering_rerun'] = True
                             st.rerun()
                         except Exception as e:
                             st.error(f"Ocorreu um erro ao aplicar a transformação: {e}")
+
 
     st.markdown("---")
 

@@ -993,7 +993,6 @@ def show_clustering_analysis(df):
 
 def show_exploratory_analysis():
     st.header("📊 Análise Exploratória de Dados")
-
     if st.session_state['df_processed'] is None or st.session_state['df_processed'].empty:
         st.warning("⚠️ Dados não carregados ou pré-processados. Por favor, complete as etapas anteriores.")
         return
