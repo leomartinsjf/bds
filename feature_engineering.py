@@ -120,15 +120,33 @@ def show_feature_engineering():
 
     st.markdown("---")
 
-    # 2. Criar Variáveis Dummies
+        # 2. Criar Variáveis Dummies
     with st.expander("🏷️ Criar Variáveis Dummies"):
         if cat_cols:
-            selected_cat_dummy = st.selectbox("Variável categórica", cat_cols, key=key_prefix + "catdummy_select")
-            drop_first_dummy = st.checkbox("Remover primeira categoria (drop_first)", value=True, key=key_prefix + "dropfirst_checkbox")
-            if st.button("Criar dummies", key=key_prefix + "createdummies_button"):
-                if selected_cat_dummy:
+            selected_cat_dummy = st.selectbox(
+                "Variável categórica",
+                options=[""] + cat_cols,
+                index=0,
+                key=key_prefix + "catdummy_select"
+            )
+
+            if selected_cat_dummy == "":
+                st.info("Selecione uma variável.")
+            else:
+                drop_first_dummy = st.checkbox(
+                    "Remover primeira categoria (drop_first)",
+                    value=True,
+                    key=key_prefix + "dropfirst_checkbox"
+                )
+
+                if st.button("Criar dummies", key=key_prefix + "createdummies_button"):
                     try:
-                        dummies = pd.get_dummies(df_current_session_copy[selected_cat_dummy], prefix=selected_cat_dummy, drop_first=drop_first_dummy, dtype=int)
+                        dummies = pd.get_dummies(
+                            df_current_session_copy[selected_cat_dummy],
+                            prefix=selected_cat_dummy,
+                            drop_first=drop_first_dummy,
+                            dtype=int
+                        )
                         existing_dummy_cols = [col for col in dummies.columns if col_exists(df_current_session_copy, col)]
                         if existing_dummy_cols:
                             st.error(f"Colunas dummy já existem: {', '.join(existing_dummy_cols)}.")
@@ -143,18 +161,25 @@ def show_feature_engineering():
                             st.rerun()
                     except Exception as e:
                         st.error(f"Erro ao criar dummies: {e}")
-                else:
-                    st.warning("Selecione uma variável.")
         else:
             st.info("Nenhuma variável categórica disponível.")
 
+
     st.markdown("---")
 
-    # 3. Criar Variável Binária (com operadores)
+        # 3. Criar Variável Binária (com operadores)
     with st.expander("🔀 Criar Variável Binária"):
         if all_cols:
-            bin_var = st.selectbox("Variável de referência", all_cols, key=key_prefix + "binvar_select")
-            if bin_var in df_current_session_copy.columns:
+            bin_var = st.selectbox(
+                "Variável de referência",
+                options=[""] + all_cols,
+                index=0,
+                key=key_prefix + "binvar_select"
+            )
+
+            if bin_var == "":
+                st.info("Selecione uma variável.")
+            elif bin_var in df_current_session_copy.columns:
                 unique_vals = df_current_session_copy[bin_var].dropna().unique().tolist()
                 if len(unique_vals) > 0:
                     op = st.selectbox("Operação de comparação", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "bin_op")
@@ -188,183 +213,223 @@ def show_feature_engineering():
         else:
             st.info("Nenhuma variável adequada para criar binária.")
 
+
     st.markdown("---")
 
-    # 4. Criar variável filtrada por valor (condição única) (com operadores)
+        # 4. Criar variável filtrada por valor (condição única) (com operadores)
     with st.expander("📌 Criar variável filtrada por valor (condição única)"):
         if all_cols:
-            filter_col = st.selectbox("Variável para filtrar", all_cols, key=key_prefix + "filtercol_select")
-            op = st.selectbox("Operação de comparação", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "filter_op")
-            filter_value_single = st.text_input("Valor para comparar (ex: 'Sim', 1.0)", value="", key=key_prefix + "filterval_single_input")
-            new_filtered_name_single = st.text_input("Nome da nova variável filtrada", key=key_prefix + "filternewvar_single_input")
-            if st.button("Criar variável filtrada (única)", key=key_prefix + "create_filtered_single_button"):
-                if filter_col and filter_value_single and new_filtered_name_single:
-                    if col_exists(df_current_session_copy, new_filtered_name_single):
-                        st.error(f"O nome '{new_filtered_name_single}' já existe.")
+            filter_col = st.selectbox(
+                "Variável para filtrar",
+                options=[""] + all_cols,
+                index=0,
+                key=key_prefix + "filtercol_select"
+            )
+
+            if filter_col == "":
+                st.info("Selecione uma variável.")
+            else:
+                op = st.selectbox("Operação de comparação", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "filter_op")
+                filter_value_single = st.text_input("Valor para comparar (ex: 'Sim', 1.0)", value="", key=key_prefix + "filterval_single_input")
+                new_filtered_name_single = st.text_input("Nome da nova variável filtrada", key=key_prefix + "filternewvar_single_input")
+
+                if st.button("Criar variável filtrada (única)", key=key_prefix + "create_filtered_single_button"):
+                    if filter_col and filter_value_single and new_filtered_name_single:
+                        if col_exists(df_current_session_copy, new_filtered_name_single):
+                            st.error(f"O nome '{new_filtered_name_single}' já existe.")
+                        else:
+                            try:
+                                col_data = df_current_session_copy[filter_col]
+                                val_compare = convert_val(col_data.dtype, filter_value_single)
+                                mask = apply_op(col_data, op, val_compare)
+                                df_current_session_copy[new_filtered_name_single] = np.where(mask, col_data, np.nan)
+                                st.session_state["df_processed"] = df_current_session_copy
+                                log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_filtered_name_single}' criada por filtragem de '{filter_col}' com condição '{op} {val_compare}'."
+                                st.session_state['feature_engineering_logs'].append(log_message)
+                                st.success(f"Variável '{new_filtered_name_single}' criada com base em {filter_col} {op} {val_compare}.")
+                                show_col_preview(df_current_session_copy, new_filtered_name_single)
+                                feature_engineered_flag = True
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Ocorreu um erro ao aplicar a filtragem: {e}")
                     else:
-                        try:
-                            col_data = df_current_session_copy[filter_col]
-                            val_compare = convert_val(col_data.dtype, filter_value_single)
-                            mask = apply_op(col_data, op, val_compare)
-                            df_current_session_copy[new_filtered_name_single] = np.where(mask, col_data, np.nan)
-                            st.session_state["df_processed"] = df_current_session_copy
-                            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_filtered_name_single}' criada por filtragem de '{filter_col}' com condição '{op} {val_compare}'."
-                            st.session_state['feature_engineering_logs'].append(log_message)
-                            st.success(f"Variável '{new_filtered_name_single}' criada com base em {filter_col} {op} {val_compare}.")
-                            show_col_preview(df_current_session_copy, new_filtered_name_single)
-                            feature_engineered_flag = True
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Ocorreu um erro ao aplicar a filtragem: {e}")
-                else:
-                    st.warning("Preencha todos os campos para a filtragem única.")
+                        st.warning("Preencha todos os campos para a filtragem única.")
         else:
             st.info("Nenhuma variável disponível para filtragem única.")
 
+
     st.markdown("---")
 
-    # 5. Filtrar e Criar Variável com Até Três Condições (cada uma com operador)
+       # 5. Filtrar e Criar Variável com Até Três Condições (cada uma com operador)
     with st.expander("🔬 Filtrar e Criar Variável com Até Três Condições"):
         st.subheader("Criar Variável Baseada em Múltiplas Condições")
         st.info("Cria uma nova variável que preserva os valores de uma coluna de referência somente quando uma, duas ou até três condições (comparadores) são atendidas.")
         if all_cols:
-            col_ref_cond_multi = st.selectbox("Variável de Referência (valores a preservar):", all_cols, key=key_prefix + "ref_col_cond_multi_select")
-
-            st.markdown("##### Primeira Condição")
-            col_cond1_multi = st.selectbox("Coluna para a 1ª Condição:", all_cols, key=key_prefix + "col_cond1_multi_select")
-            op_cond1 = st.selectbox("Operação de comparação 1ª condição", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "op_cond1")
-            value_cond1_multi = st.text_input("Valor da 1ª Condição:", value="", key=key_prefix + "val_cond1_multi_select")
-
-            st.markdown("##### Segunda Condição (Opcional)")
-            add_cond2_multi = st.checkbox("Adicionar Segunda Condição?", key=key_prefix + "add_cond2_multi_checkbox")
-            col_cond2_multi = None
-            op_cond2 = None
-            value_cond2_multi = ""
-            if add_cond2_multi:
-                col_cond2_multi = st.selectbox("Coluna para a 2ª Condição:", all_cols, key=key_prefix + "col_cond2_multi_select")
-                op_cond2 = st.selectbox("Operação de comparação 2ª condição", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "op_cond2")
-                value_cond2_multi = st.text_input("Valor da 2ª Condição:", value="", key=key_prefix + "val_cond2_multi_select")
-
-            st.markdown("##### Terceira Condição (Opcional)")
-            add_cond3_multi = st.checkbox("Adicionar Terceira Condição?", key=key_prefix + "add_cond3_multi_checkbox")
-            col_cond3_multi = None
-            op_cond3 = None
-            value_cond3_multi = ""
-            if add_cond3_multi:
-                col_cond3_multi = st.selectbox("Coluna para a 3ª Condição:", all_cols, key=key_prefix + "col_cond3_multi_select")
-                op_cond3 = st.selectbox("Operação de comparação 3ª condição", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "op_cond3")
-                value_cond3_multi = st.text_input("Valor da 3ª Condição:", value="", key=key_prefix + "val_cond3_multi_select")
-
-            new_filtered_name_multi_level = st.text_input(
-                "Nome da Nova Variável Filtrada:",
-                value=f"{col_ref_cond_multi}_filtered_multi" if col_ref_cond_multi else "",
-                key=key_prefix + "new_name_multi_level_input"
+            col_ref_cond_multi = st.selectbox(
+                "Variável de Referência (valores a preservar):",
+                options=[""] + all_cols,
+                index=0,
+                key=key_prefix + "ref_col_cond_multi_select"
             )
 
-            if st.button("Aplicar Filtragem de Múltiplas Condições", key=key_prefix + "apply_multi_level_filter_button"):
-                if not col_ref_cond_multi or not col_cond1_multi or value_cond1_multi == "" or not new_filtered_name_multi_level:
-                    st.warning("Preencha a variável de referência, a primeira condição e o nome da nova variável.")
-                elif add_cond2_multi and (not col_cond2_multi or value_cond2_multi == ""):
-                    st.warning("Se a segunda condição estiver marcada, selecione a coluna e o valor para ela.")
-                elif add_cond3_multi and (not col_cond3_multi or value_cond3_multi == ""):
-                    st.warning("Se a terceira condição estiver marcada, selecione a coluna e o valor para ela.")
-                elif col_exists(df_current_session_copy, new_filtered_name_multi_level):
-                    st.error(f"O nome '{new_filtered_name_multi_level}' já existe.")
-                else:
-                    try:
-                        v1 = convert_val(df_current_session_copy[col_cond1_multi].dtype, value_cond1_multi)
-                        final_condition = apply_op(df_current_session_copy[col_cond1_multi], op_cond1, v1)
-                        condition_description = f"'{col_cond1_multi}' {op_cond1} '{value_cond1_multi}'"
-                        if add_cond2_multi:
-                            v2 = convert_val(df_current_session_copy[col_cond2_multi].dtype, value_cond2_multi)
-                            final_condition = final_condition & apply_op(df_current_session_copy[col_cond2_multi], op_cond2, v2)
-                            condition_description += f" AND '{col_cond2_multi}' {op_cond2} '{value_cond2_multi}'"
-                        if add_cond3_multi:
-                            v3 = convert_val(df_current_session_copy[col_cond3_multi].dtype, value_cond3_multi)
-                            final_condition = final_condition & apply_op(df_current_session_copy[col_cond3_multi], op_cond3, v3)
-                            condition_description += f" AND '{col_cond3_multi}' {op_cond3} '{value_cond3_multi}'"
-                        df_current_session_copy[new_filtered_name_multi_level] = np.where(
-                            final_condition,
-                            df_current_session_copy[col_ref_cond_multi],
-                            np.nan
-                        )
-                        st.session_state["df_processed"] = df_current_session_copy
-                        log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_filtered_name_multi_level}' criada por filtragem de '{col_ref_cond_multi}' com múltiplas condições: {condition_description}."
-                        st.session_state['feature_engineering_logs'].append(log_message)
-                        st.success(f"Variável '{new_filtered_name_multi_level}' criada com base em múltiplas condições.")
-                        show_col_preview(df_current_session_copy, new_filtered_name_multi_level)
-                        feature_engineered_flag = True
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Ocorreu um erro ao aplicar a filtragem: {e}")
+            if col_ref_cond_multi == "":
+                st.info("Selecione a variável de referência.")
+            else:
+                st.markdown("##### Primeira Condição")
+                col_cond1_multi = st.selectbox("Coluna para a 1ª Condição:", all_cols, key=key_prefix + "col_cond1_multi_select")
+                op_cond1 = st.selectbox("Operação de comparação 1ª condição", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "op_cond1")
+                value_cond1_multi = st.text_input("Valor da 1ª Condição:", value="", key=key_prefix + "val_cond1_multi_select")
+
+                st.markdown("##### Segunda Condição (Opcional)")
+                add_cond2_multi = st.checkbox("Adicionar Segunda Condição?", key=key_prefix + "add_cond2_multi_checkbox")
+                col_cond2_multi = None
+                op_cond2 = None
+                value_cond2_multi = ""
+                if add_cond2_multi:
+                    col_cond2_multi = st.selectbox("Coluna para a 2ª Condição:", all_cols, key=key_prefix + "col_cond2_multi_select")
+                    op_cond2 = st.selectbox("Operação de comparação 2ª condição", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "op_cond2")
+                    value_cond2_multi = st.text_input("Valor da 2ª Condição:", value="", key=key_prefix + "val_cond2_multi_select")
+
+                st.markdown("##### Terceira Condição (Opcional)")
+                add_cond3_multi = st.checkbox("Adicionar Terceira Condição?", key=key_prefix + "add_cond3_multi_checkbox")
+                col_cond3_multi = None
+                op_cond3 = None
+                value_cond3_multi = ""
+                if add_cond3_multi:
+                    col_cond3_multi = st.selectbox("Coluna para a 3ª Condição:", all_cols, key=key_prefix + "col_cond3_multi_select")
+                    op_cond3 = st.selectbox("Operação de comparação 3ª condição", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "op_cond3")
+                    value_cond3_multi = st.text_input("Valor da 3ª Condição:", value="", key=key_prefix + "val_cond3_multi_select")
+
+                new_filtered_name_multi_level = st.text_input(
+                    "Nome da Nova Variável Filtrada:",
+                    value=f"{col_ref_cond_multi}_filtered_multi" if col_ref_cond_multi else "",
+                    key=key_prefix + "new_name_multi_level_input"
+                )
+
+                if st.button("Aplicar Filtragem de Múltiplas Condições", key=key_prefix + "apply_multi_level_filter_button"):
+                    if not col_ref_cond_multi or not col_cond1_multi or value_cond1_multi == "" or not new_filtered_name_multi_level:
+                        st.warning("Preencha a variável de referência, a primeira condição e o nome da nova variável.")
+                    elif add_cond2_multi and (not col_cond2_multi or value_cond2_multi == ""):
+                        st.warning("Se a segunda condição estiver marcada, selecione a coluna e o valor para ela.")
+                    elif add_cond3_multi and (not col_cond3_multi or value_cond3_multi == ""):
+                        st.warning("Se a terceira condição estiver marcada, selecione a coluna e o valor para ela.")
+                    elif col_exists(df_current_session_copy, new_filtered_name_multi_level):
+                        st.error(f"O nome '{new_filtered_name_multi_level}' já existe.")
+                    else:
+                        try:
+                            v1 = convert_val(df_current_session_copy[col_cond1_multi].dtype, value_cond1_multi)
+                            final_condition = apply_op(df_current_session_copy[col_cond1_multi], op_cond1, v1)
+                            condition_description = f"'{col_cond1_multi}' {op_cond1} '{value_cond1_multi}'"
+                            if add_cond2_multi:
+                                v2 = convert_val(df_current_session_copy[col_cond2_multi].dtype, value_cond2_multi)
+                                final_condition = final_condition & apply_op(df_current_session_copy[col_cond2_multi], op_cond2, v2)
+                                condition_description += f" AND '{col_cond2_multi}' {op_cond2} '{value_cond2_multi}'"
+                            if add_cond3_multi:
+                                v3 = convert_val(df_current_session_copy[col_cond3_multi].dtype, value_cond3_multi)
+                                final_condition = final_condition & apply_op(df_current_session_copy[col_cond3_multi], op_cond3, v3)
+                                condition_description += f" AND '{col_cond3_multi}' {op_cond3} '{value_cond3_multi}'"
+                            df_current_session_copy[new_filtered_name_multi_level] = np.where(
+                                final_condition,
+                                df_current_session_copy[col_ref_cond_multi],
+                                np.nan
+                            )
+                            st.session_state["df_processed"] = df_current_session_copy
+                            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_filtered_name_multi_level}' criada por filtragem de '{col_ref_cond_multi}' com múltiplas condições: {condition_description}."
+                            st.session_state['feature_engineering_logs'].append(log_message)
+                            st.success(f"Variável '{new_filtered_name_multi_level}' criada com base em múltiplas condições.")
+                            show_col_preview(df_current_session_copy, new_filtered_name_multi_level)
+                            feature_engineered_flag = True
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Ocorreu um erro ao aplicar a filtragem: {e}")
         else:
             st.info("Nenhuma variável disponível para filtragem condicional de múltiplos níveis.")
 
     st.markdown("---")
 
-    # 6. Transformações Matemáticas
+        # 6. Transformações Matemáticas
     with st.expander("🧮 Transformações Matemáticas"):
         if num_cols:
-            math_var = st.selectbox("Variável numérica", num_cols, key=key_prefix + "mathvar_select")
-            transform_type = st.selectbox("Tipo de transformação", ["Log", "Quadrado", "Raiz quadrada", "Z-score"], key=key_prefix + "transform_type_select")
-            if st.button("Aplicar transformação", key=key_prefix + "applytransform_button"):
-                try:
-                    new_math_col_name = f"{math_var}_{transform_type.lower().replace(' ', '_')}"
-                    if col_exists(df_current_session_copy, new_math_col_name):
-                        st.error(f"O nome '{new_math_col_name}' já existe.")
-                    else:
-                        if transform_type == "Log":
-                            if (df_current_session_copy[math_var] < 0).any():
-                                st.error("Log requer valores não-negativos.")
-                            else:
-                                df_current_session_copy[new_math_col_name] = np.log1p(df_current_session_copy[math_var].clip(lower=0))
-                        elif transform_type == "Quadrado":
-                            df_current_session_copy[new_math_col_name] = df_current_session_copy[math_var] ** 2
-                        elif transform_type == "Raiz quadrada":
-                            if (df_current_session_copy[math_var] < 0).any():
-                                st.error("Raiz quadrada requer valores não-negativos.")
-                            else:
-                                df_current_session_copy[new_math_col_name] = np.sqrt(df_current_session_copy[math_var].clip(lower=0))
-                        elif transform_type == "Z-score":
-                            std = df_current_session_copy[math_var].std()
-                            df_current_session_copy[new_math_col_name] = 0 if std == 0 else (df_current_session_copy[math_var] - df_current_session_copy[math_var].mean()) / std
-                        st.session_state["df_processed"] = df_current_session_copy
-                        log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Transformação '{transform_type}' aplicada na variável '{math_var}'. Nova coluna: '{new_math_col_name}'."
-                        st.session_state['feature_engineering_logs'].append(log_message)
-                        st.success(f"Transformação '{transform_type}' aplicada. Nova coluna: '{new_math_col_name}'.")
-                        show_col_preview(df_current_session_copy, new_math_col_name)
-                        feature_engineered_flag = True
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Erro: {e}")
+            math_var = st.selectbox(
+                "Variável numérica",
+                options=[""] + num_cols,
+                index=0,
+                key=key_prefix + "mathvar_select"
+            )
+
+            if math_var == "":
+                st.info("Selecione uma variável.")
+            else:
+                transform_type = st.selectbox("Tipo de transformação", ["Log", "Quadrado", "Raiz quadrada", "Z-score"], key=key_prefix + "transform_type_select")
+                if st.button("Aplicar transformação", key=key_prefix + "applytransform_button"):
+                    try:
+                        new_math_col_name = f"{math_var}_{transform_type.lower().replace(' ', '_')}"
+                        if col_exists(df_current_session_copy, new_math_col_name):
+                            st.error(f"O nome '{new_math_col_name}' já existe.")
+                        else:
+                            if transform_type == "Log":
+                                if (df_current_session_copy[math_var] < 0).any():
+                                    st.error("Log requer valores não-negativos.")
+                                else:
+                                    df_current_session_copy[new_math_col_name] = np.log1p(df_current_session_copy[math_var].clip(lower=0))
+                            elif transform_type == "Quadrado":
+                                df_current_session_copy[new_math_col_name] = df_current_session_copy[math_var] ** 2
+                            elif transform_type == "Raiz quadrada":
+                                if (df_current_session_copy[math_var] < 0).any():
+                                    st.error("Raiz quadrada requer valores não-negativos.")
+                                else:
+                                    df_current_session_copy[new_math_col_name] = np.sqrt(df_current_session_copy[math_var].clip(lower=0))
+                            elif transform_type == "Z-score":
+                                std = df_current_session_copy[math_var].std()
+                                df_current_session_copy[new_math_col_name] = 0 if std == 0 else (df_current_session_copy[math_var] - df_current_session_copy[math_var].mean()) / std
+                            st.session_state["df_processed"] = df_current_session_copy
+                            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Transformação '{transform_type}' aplicada na variável '{math_var}'. Nova coluna: '{new_math_col_name}'."
+                            st.session_state['feature_engineering_logs'].append(log_message)
+                            st.success(f"Transformação '{transform_type}' aplicada. Nova coluna: '{new_math_col_name}'.")
+                            show_col_preview(df_current_session_copy, new_math_col_name)
+                            feature_engineered_flag = True
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro: {e}")
         else:
             st.info("Nenhuma variável numérica disponível.")
+
 
     st.markdown("---")
 
-    # 7. Inverter Escala de Variáveis Likert
+        # 7. Inverter Escala de Variáveis Likert
     with st.expander("🔁 Inverter Escala de Variáveis Likert"):
         if num_cols:
-            likert_var = st.selectbox("Variável Likert a inverter", num_cols, key=key_prefix + "likertvar_select")
-            max_val = st.number_input("Valor máximo da escala Likert", min_value=1, value=5, key=key_prefix + "likertmax_input")
-            new_name_likert = st.text_input("Nome da variável invertida", value=f"{likert_var}_inv", key=key_prefix + "likertname_input")
-            if st.button("Inverter variável Likert", key=key_prefix + "invertlikert_button"):
-                if col_exists(df_current_session_copy, new_name_likert):
-                    st.error(f"O nome '{new_name_likert}' já existe.")
-                else:
-                    try:
-                        df_current_session_copy[new_name_likert] = max_val + 1 - df_current_session_copy[likert_var]
-                        st.session_state["df_processed"] = df_current_session_copy
-                        log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Escala da variável Likert '{likert_var}' invertida para '{new_name_likert}' (Max Val: {max_val})."
-                        st.session_state['feature_engineering_logs'].append(log_message)
-                        st.success(f"Variável '{new_name_likert}' criada.")
-                        show_col_preview(df_current_session_copy, new_name_likert)
-                        feature_engineered_flag = True
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Erro ao inverter variável Likert: {e}")
+            likert_var = st.selectbox(
+                "Variável Likert a inverter",
+                options=[""] + num_cols,
+                index=0,
+                key=key_prefix + "likertvar_select"
+            )
+
+            if likert_var == "":
+                st.info("Selecione uma variável.")
+            else:
+                max_val = st.number_input("Valor máximo da escala Likert", min_value=1, value=5, key=key_prefix + "likertmax_input")
+                new_name_likert = st.text_input("Nome da variável invertida", value=f"{likert_var}_inv", key=key_prefix + "likertname_input")
+                if st.button("Inverter variável Likert", key=key_prefix + "invertlikert_button"):
+                    if col_exists(df_current_session_copy, new_name_likert):
+                        st.error(f"O nome '{new_name_likert}' já existe.")
+                    else:
+                        try:
+                            df_current_session_copy[new_name_likert] = max_val + 1 - df_current_session_copy[likert_var]
+                            st.session_state["df_processed"] = df_current_session_copy
+                            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Escala da variável Likert '{likert_var}' invertida para '{new_name_likert}' (Max Val: {max_val})."
+                            st.session_state['feature_engineering_logs'].append(log_message)
+                            st.success(f"Variável '{new_name_likert}' criada.")
+                            show_col_preview(df_current_session_copy, new_name_likert)
+                            feature_engineered_flag = True
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Erro ao inverter variável Likert: {e}")
         else:
             st.info("Nenhuma variável numérica disponível.")
+
 
     st.markdown("---")
 
@@ -393,34 +458,45 @@ def show_feature_engineering():
 
     st.markdown("---")
 
-    # 9. Discretização de Variáveis (pd.qcut)
+        # 9. Discretização de Variáveis (pd.qcut)
     with st.expander("📊 Discretizar Variável Numérica (Quantis)"):
         if num_cols:
-            var_to_bin_qcut = st.selectbox("Variável a discretizar", num_cols, key=key_prefix + "discretizevar_qcut_select")
-            bins_qcut = st.number_input("Número de bins", min_value=2, max_value=20, value=5, key=key_prefix + "bins_qcut_input")
-            new_bin_name_qcut = st.text_input("Nome da variável discretizada", value=f"{var_to_bin_qcut}_binned_qcut", key=key_prefix + "binnamed_qcut_input")
-            if st.button("Discretizar variável (Quantis)", key=key_prefix + "apply_discretize_qcut_button"):
-                if col_exists(df_current_session_copy, new_bin_name_qcut):
-                    st.error(f"O nome '{new_bin_name_qcut}' já existe.")
-                else:
-                    try:
-                        temp_series_no_nan = df_current_session_copy[var_to_bin_qcut].dropna()
-                        if not temp_series_no_nan.empty:
-                            binned_data = pd.qcut(temp_series_no_nan, q=int(bins_qcut), duplicates='drop')
-                            df_current_session_copy.loc[binned_data.index, new_bin_name_qcut] = binned_data
-                            st.session_state["df_processed"] = df_current_session_copy
-                            log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{var_to_bin_qcut}' discretizada em {int(bins_qcut)} quantis. Nova coluna: '{new_bin_name_qcut}'."
-                            st.session_state['feature_engineering_logs'].append(log_message)
-                            st.success(f"Variável '{new_bin_name_qcut}' criada por quantis.")
-                            show_col_preview(df_current_session_copy, new_bin_name_qcut)
-                            feature_engineered_flag = True
-                            st.rerun()
-                        else:
-                            st.warning(f"Coluna '{var_to_bin_qcut}' contém apenas valores nulos ou insuficientes para discretização por quantis.")
-                    except Exception as e:
-                        st.error(f"Erro ao discretizar por quantis: {e}")
+            var_to_bin_qcut = st.selectbox(
+                "Variável a discretizar",
+                options=[""] + num_cols,
+                index=0,
+                key=key_prefix + "discretizevar_qcut_select"
+            )
+
+            if var_to_bin_qcut == "":
+                st.info("Selecione uma variável.")
+            else:
+                bins_qcut = st.number_input("Número de bins", min_value=2, max_value=20, value=5, key=key_prefix + "bins_qcut_input")
+                new_bin_name_qcut = st.text_input("Nome da variável discretizada", value=f"{var_to_bin_qcut}_binned_qcut", key=key_prefix + "binnamed_qcut_input")
+
+                if st.button("Discretizar variável (Quantis)", key=key_prefix + "apply_discretize_qcut_button"):
+                    if col_exists(df_current_session_copy, new_bin_name_qcut):
+                        st.error(f"O nome '{new_bin_name_qcut}' já existe.")
+                    else:
+                        try:
+                            temp_series_no_nan = df_current_session_copy[var_to_bin_qcut].dropna()
+                            if not temp_series_no_nan.empty:
+                                binned_data = pd.qcut(temp_series_no_nan, q=int(bins_qcut), duplicates='drop')
+                                df_current_session_copy.loc[binned_data.index, new_bin_name_qcut] = binned_data
+                                st.session_state["df_processed"] = df_current_session_copy
+                                log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{var_to_bin_qcut}' discretizada em {int(bins_qcut)} quantis. Nova coluna: '{new_bin_name_qcut}'."
+                                st.session_state['feature_engineering_logs'].append(log_message)
+                                st.success(f"Variável '{new_bin_name_qcut}' criada por quantis.")
+                                show_col_preview(df_current_session_copy, new_bin_name_qcut)
+                                feature_engineered_flag = True
+                                st.rerun()
+                            else:
+                                st.warning(f"Coluna '{var_to_bin_qcut}' contém apenas valores nulos ou insuficientes para discretização por quantis.")
+                        except Exception as e:
+                            st.error(f"Erro ao discretizar por quantis: {e}")
         else:
             st.info("Nenhuma variável numérica disponível.")
+
 
     st.markdown("---")
 
@@ -483,7 +559,7 @@ def show_feature_engineering():
 
     st.markdown("---")
 
-    # 11. Transformar Numéricas/Binárias em Categóricas Nomeadas
+        # 11. Transformar Numéricas/Binárias em Categóricas Nomeadas
     with st.expander("🏷️ Transformar Numéricas/Binárias em Categóricas Nomeadas"):
         st.subheader("Criar Variável Categórica a partir de Numérica, Binária ou Categórica")
         st.info("Permite converter colunas numéricas (incluindo binárias 0/1) e categóricas com poucos valores únicos em novas colunas categóricas com nomes personalizados para cada valor.")
@@ -505,8 +581,16 @@ def show_feature_engineering():
         if not candidate_cols_for_naming:
             st.info("Nenhuma coluna adequada encontrada (espera-se numérica/binária/categórica com até 10 valores únicos).")
         else:
-            selected_col_for_naming = st.selectbox("Selecione a coluna para transformar:", options=candidate_cols_for_naming, key=key_prefix + "transform_to_cat_col_select")
-            if selected_col_for_naming:
+            selected_col_for_naming = st.selectbox(
+                "Selecione a coluna para transformar:",
+                options=[""] + candidate_cols_for_naming,
+                index=0,
+                key=key_prefix + "transform_to_cat_col_select"
+            )
+
+            if selected_col_for_naming == "":
+                st.info("Selecione uma variável.")
+            else:
                 st.write(f"Valores únicos na coluna '{selected_col_for_naming}': {df_current_session_copy[selected_col_for_naming].dropna().unique().tolist()}")
                 unique_values_to_map = df_current_session_copy[selected_col_for_naming].dropna().unique().tolist()
                 unique_values_to_map.sort()
@@ -521,7 +605,10 @@ def show_feature_engineering():
                 cols_map = st.columns(2)
                 for i, val in enumerate(unique_values_to_map):
                     with cols_map[i % 2]:
-                        new_category_name = st.text_input(f"Mapear '{val}' para:", key=f"{key_prefix}map_{selected_col_for_naming}_{str(val).replace('.', '_').replace('-', '_')}")
+                        new_category_name = st.text_input(
+                            f"Mapear '{val}' para:",
+                            key=f"{key_prefix}map_{selected_col_for_naming}_{str(val).replace('.', '_').replace('-', '_')}"
+                        )
                         if new_category_name:
                             mapping[val] = new_category_name
 
@@ -559,58 +646,45 @@ def show_feature_engineering():
 
     st.markdown("---")
 
-    # 12. Extrair Componentes Temporais de Colunas de Data/Hora
-    with st.expander("⏰ Extrair Componentes Temporais"):
-        st.info("Crie novas colunas numéricas a partir de componentes de data/hora (Ano, Mês, Dia, Hora, Minuto, Segundo).")
+        # 12. Extração de Componentes Temporais de Colunas Datetime
+    with st.expander("⏰ Extração Temporal"):
         if date_cols:
-            selected_date_col = st.selectbox("Selecione uma coluna de data/hora:", options=date_cols, key=key_prefix + "date_col_select")
-            if selected_date_col:
-                temporal_features = st.multiselect("Selecione os componentes a extrair:", options=["Ano", "Mês", "Dia", "Dia da Semana", "Hora", "Minuto", "Segundo"], key=key_prefix + "temporal_features_multiselect")
-                if st.button("Extrair Componentes Temporais", key=key_prefix + "extract_temporal_button"):
-                    if not temporal_features:
-                        st.warning("Selecione pelo menos um componente temporal para extrair.")
-                    else:
-                        any_new_col_created = False
-                        created_temp_cols = []
-                        try:
-                            df_current_session_copy[selected_date_col] = pd.to_datetime(df_current_session_copy[selected_date_col], errors='coerce')
-                            for feature in temporal_features:
-                                new_col_name = f"{selected_date_col}_{feature.lower().replace(' ', '_')}"
-                                if col_exists(df_current_session_copy, new_col_name):
-                                    st.info(f"Coluna '{new_col_name}' já existe e será ignorada.")
-                                    continue
-                                if feature == "Ano":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.year
-                                elif feature == "Mês":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.month
-                                elif feature == "Dia":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.day
-                                elif feature == "Dia da Semana":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.dayofweek
-                                elif feature == "Hora":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.hour
-                                elif feature == "Minuto":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.minute
-                                elif feature == "Segundo":
-                                    df_current_session_copy[new_col_name] = df_current_session_copy[selected_date_col].dt.second
-                                any_new_col_created = True
-                                created_temp_cols.append(new_col_name)
-                            if any_new_col_created:
-                                st.session_state.df_processed = df_current_session_copy
-                                log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Componentes temporais {', '.join(temporal_features)} extraídos de '{selected_date_col}'. Nova(s) coluna(s): {', '.join(created_temp_cols)}."
-                                st.session_state['feature_engineering_logs'].append(log_message)
-                                st.success(f"Componentes temporais extraídos de '{selected_date_col}'.")
-                                show_col_preview(df_current_session_copy, created_temp_cols)
-                                feature_engineered_flag = True
-                                st.rerun()
-                            else:
-                                st.info("Nenhuma nova coluna temporal foi criada (verifique as seleções ou se já existem).")
-                        except Exception as e:
-                            st.error(f"Erro ao transformar variáveis temporais: {e}")
+            selected_date_col = st.selectbox(
+                "Selecione uma coluna de data/hora:",
+                options=[""] + date_cols,
+                index=0,
+                key=key_prefix + "date_col_select"
+            )
+
+            if selected_date_col == "":
+                st.info("Selecione uma variável.")
             else:
-                st.info("Selecione uma coluna de data/hora.")
+                components = st.multiselect("Componentes a extrair:", ["Ano", "Mês", "Dia", "Dia da semana", "Hora", "Minuto"], key=key_prefix + "datetime_components_multiselect")
+
+                if st.button("Extrair componentes temporais", key=key_prefix + "extract_datetime_components_button"):
+                    try:
+                        for comp in components:
+                            if comp == "Ano":
+                                df_current_session_copy[f"{selected_date_col}_ano"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.year
+                            elif comp == "Mês":
+                                df_current_session_copy[f"{selected_date_col}_mes"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.month
+                            elif comp == "Dia":
+                                df_current_session_copy[f"{selected_date_col}_dia"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.day
+                            elif comp == "Dia da semana":
+                                df_current_session_copy[f"{selected_date_col}_semana"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.dayofweek
+                            elif comp == "Hora":
+                                df_current_session_copy[f"{selected_date_col}_hora"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.hour
+                            elif comp == "Minuto":
+                                df_current_session_copy[f"{selected_date_col}_minuto"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.minute
+                        st.session_state["df_processed"] = df_current_session_copy
+                        st.success("Componentes extraídos com sucesso.")
+                        feature_engineered_flag = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro ao extrair componentes de data/hora: {e}")
         else:
-            st.info("Nenhuma coluna de data/hora disponível.")
+            st.info("Nenhuma coluna com tipo datetime encontrada.")
+
 
     st.markdown("---")
 

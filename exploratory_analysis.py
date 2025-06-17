@@ -1,4 +1,4 @@
-#30/05 11:21
+#correta 16/06
 
 import streamlit as st
 import pandas as pd
@@ -112,8 +112,9 @@ def show_contingency_analysis(df):
 
     
     elif analysis_type == "Tabela de Contingência (2 Variáveis)":
-        col1 = st.selectbox("Selecione a primeira variável categórica:", cat_cols, key="contingency_col1")
-        col2 = st.selectbox("Selecione a segunda variável categórica:", cat_cols, key="contingency_col2")
+        col1 = st.selectbox("Selecione a primeira variável categórica:", [""] + cat_cols, index=0, key="contingency_col1")
+        col2 = st.selectbox("Selecione a segunda variável categórica:", [""] + cat_cols, index=0, key="contingency_col2")
+
 
         if st.button("Gerar Tabela de Contingência e Teste Qui-Quadrado", key="generate_contingency_table"):
             if col1 and col2:
@@ -149,6 +150,17 @@ def show_contingency_analysis(df):
                     combined_table = combined_table.reorder_levels([1, 0], axis=1).sort_index(axis=1)
                     
                     st.dataframe(combined_table.round(3)) # Arredonda para melhor visualização
+                    # Diagnóstico automático de dominância
+                    row_prop = pd.crosstab(df_temp[col1], df_temp[col2], normalize='index') * 100
+                    max_row_share = row_prop.max(axis=1).max()
+
+                    if max_row_share >= 90:
+                        st.warning("📌 Algumas categorias têm distribuição altamente concentrada (dominância > 90%). Pode haver associação forte entre as variáveis.")
+                    elif max_row_share < 50:
+                        st.info("📌 As distribuições estão relativamente equilibradas entre as categorias.")
+                    else:
+                        st.info("📌 Há moderada assimetria na distribuição conjunta das variáveis.")
+
                     st.info("Para cada célula, são exibidos: **Observado** (frequência real), **Esperado** (frequência sob independência) e **Res. Padronizado** (desvio da frequência esperada, valores |>2| indicam contribuição significativa).")
 
                     st.write("---") # Separador visual
@@ -195,126 +207,142 @@ def show_contingency_analysis(df):
             else:
                 st.warning("Selecione ambas as variáveis para gerar a tabela de contingência.")
 
-
 def show_correlation_matrix_interface(df):
-    st.subheader("Matriz de Correlação e Gráficos de Pares")
-    st.info("Visualize a força e direção da relação entre variáveis numéricas.")
+    import pingouin as pg
+    st.markdown("### Análise de Correlação Completa")
+    st.info("Abaixo estão integradas as análises de Pearson, Spearman, Parcial e por Subgrupos.")
 
     num_cols = df.select_dtypes(include=np.number).columns.tolist()
     cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
 
-    if not num_cols:
-        st.warning("Não há colunas numéricas no DataFrame para calcular a matriz de correlação.")
+    if len(num_cols) < 2:
+        st.warning("É necessário pelo menos duas variáveis numéricas.")
         return
 
+    st.markdown("#### Correlação Pearson + Spearman (por pares)")
     selected_corr_cols = st.multiselect(
-        "Selecione as variáveis numéricas para a matriz de correlação:",
-        num_cols,
-        default=num_cols if len(num_cols) <= 10 else num_cols[:10],
-        key="corr_matrix_cols"
+        "Selecione variáveis numéricas:",
+        options=num_cols,
+        default=[],
+        key="corr_combined_vars"
     )
+    if selected_corr_cols and len(selected_corr_cols) >= 2:
+        pearson_corr = df[selected_corr_cols].corr(method="pearson")
+        spearman_corr = df[selected_corr_cols].corr(method="spearman")
 
-    if st.button("Gerar Matriz de Correlação", key="generate_corr_matrix"):
-        if selected_corr_cols:
-            st.write("### Matriz de Correlação (Pearson)")
-            corr_matrix = df[selected_corr_cols].corr()
-            st.dataframe(corr_matrix)
+        # --- Tabela de pares ---
+        pearson_pairs = pearson_corr.where(np.triu(np.ones(pearson_corr.shape), k=1).astype(bool)).stack().reset_index()
+        spearman_pairs = spearman_corr.where(np.triu(np.ones(spearman_corr.shape), k=1).astype(bool)).stack().reset_index()
 
-            st.write("### Mapa de Calor da Correlação")
-            fig, ax = plt.subplots(figsize=(10, 8))
-            sns.heatmap(corr_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=.5, ax=ax)
-            ax.set_title('Mapa de Calor da Matriz de Correlação')
-            st.pyplot(fig)
-            plt.close(fig)
+        pearson_pairs.columns = ["Var1", "Var2", "Pearson"]
+        spearman_pairs.columns = ["Var1", "Var2", "Spearman"]
 
-            st.markdown("### 📊 Matriz de Correlação (Spearman)")
-            spearman_corr = df[selected_corr_cols].corr(method="spearman")
-            st.dataframe(spearman_corr.style.background_gradient(cmap="Purples"), use_container_width=True)
-            st.download_button("📥 Baixar matriz Spearman (.csv)", spearman_corr.to_csv().encode("utf-8"),
-                               file_name="correlacao_spearman.csv", mime="text/csv")
-        else:
-            st.warning("Selecione pelo menos uma coluna numérica para gerar a matriz de correlação.")
+        paired_corrs = pd.merge(pearson_pairs, spearman_pairs, on=["Var1", "Var2"])
+        st.dataframe(paired_corrs.round(2))
 
-    if st.checkbox("Gerar Gráfico de Pares (Pair Plot)", key="generate_pair_plot_checkbox"):
-        if selected_corr_cols:
-            st.info("O Pair Plot pode levar algum tempo para renderizar com muitas variáveis ou grandes conjuntos de dados.")
-            pair_plot_subset = st.multiselect(
-                "Selecione variáveis para o Pair Plot (máximo 5 recomendado):",
-                selected_corr_cols,
-                default=selected_corr_cols[:min(len(selected_corr_cols), 5)],
-                key="pair_plot_subset_cols"
-            )
-            if st.button("Gerar Pair Plot", key="generate_pair_plot_button"):
-                if pair_plot_subset:
-                    if len(pair_plot_subset) > 7:
-                        st.warning("Gerar Pair Plot com mais de 7 variáveis pode ser muito lento.")
-                    else:
-                        st.write("### Gráfico de Pares")
-                        fig = sns.pairplot(df[pair_plot_subset].dropna())
-                        st.pyplot(fig)
-                        plt.close("all")
-                else:
-                    st.warning("Selecione as variáveis para o Pair Plot.")
-        else:
-            st.warning("Nenhuma variável numérica selecionada para o Pair Plot.")
-
-    st.markdown("### 🧮 Correlação Parcial entre duas variáveis controlando uma terceira")
-    var1 = st.selectbox("📌 Variável 1", num_cols, key="partial_var1")
-    var2 = st.selectbox("📌 Variável 2", [v for v in num_cols if v != var1], key="partial_var2")
-    control = st.selectbox("🎯 Controlar por", [v for v in num_cols if v not in [var1, var2]], key="partial_control")
-
-    if var1 and var2 and control:
-        try:
-            df_pc = df[[var1, var2, control]].dropna()
-            reg1 = LinearRegression().fit(df_pc[[control]], df_pc[var1])
-            reg2 = LinearRegression().fit(df_pc[[control]], df_pc[var2])
-            resid1 = df_pc[var1] - reg1.predict(df_pc[[control]])
-            resid2 = df_pc[var2] - reg2.predict(df_pc[[control]])
-            r_pearson, p_pearson = pearsonr(resid1, resid2)
-            r_spearman, p_spearman = spearmanr(resid1, resid2)
-            st.metric("Correlação parcial (Pearson)", f"{r_pearson:.4f}")
-            st.metric("p-valor (Pearson)", f"{p_pearson:.4f}")
-            st.metric("Correlação parcial (Spearman)", f"{r_spearman:.4f}")
-            st.metric("p-valor (Spearman)", f"{p_spearman:.4f}")
-        except Exception as e:
-            st.error(f"Erro ao calcular correlação parcial: {e}")
-
-    st.markdown("### 📊 Correlação por Subgrupo")
-    if cat_cols:
-        strat_col = st.selectbox("Variável categórica para estratificar:", cat_cols, key="corr_strat_col")
-        group_corr_var = st.selectbox("Variável 1 para correlação por grupo", num_cols, key="corr_strat_x")
-        group_corr_var2 = st.selectbox("Variável 2 para correlação por grupo", [v for v in num_cols if v != group_corr_var], key="corr_strat_y")
-
-        if strat_col and group_corr_var and group_corr_var2:
-            st.write(f"Correlação entre `{group_corr_var}` e `{group_corr_var2}` por `{strat_col}`:")
-            grouped = df[[group_corr_var, group_corr_var2, strat_col]].dropna().groupby(strat_col)
-            results = []
-            for g, data in grouped:
-                try:
-                    r_p, _ = pearsonr(data[group_corr_var], data[group_corr_var2])
-                    r_s, _ = spearmanr(data[group_corr_var], data[group_corr_var2])
-                    results.append((g, round(r_p, 3), round(r_s, 3)))
-                except:
-                    results.append((g, np.nan, np.nan))
-            st.dataframe(pd.DataFrame(results, columns=[strat_col, "Pearson", "Spearman"]))
-
-    st.markdown("### 📈 Dispersão com Cores por Categoria (interativo)")
-    x_disp = st.selectbox("Eixo X", num_cols, key="disp_x")
-    y_disp = st.selectbox("Eixo Y", [v for v in num_cols if v != x_disp], key="disp_y")
-    group_color = st.selectbox("Colorir por (opcional)", ["(nenhuma)"] + cat_cols, key="disp_color")
-
-    if x_disp and y_disp:
-        fig = px.scatter(
-            df,
-            x=x_disp,
-            y=y_disp,
-            color=df[group_color] if group_color != "(nenhuma)" else None,
-            title=f"Dispersão: {x_disp} vs {y_disp}",
-            opacity=0.7,
-            trendline="ols",
-            #trendline_color_override="black"
+        # --- Heatmap aprimorado (Pearson) ---
+        st.markdown("#### Heatmap de Correlação de Pearson")
+        fig, ax = plt.subplots(figsize=(min(1.2 * len(selected_corr_cols), 12), 1.2 * len(selected_corr_cols)))
+        sns.heatmap(
+            pearson_corr,
+            annot=True,
+            fmt=".2f",
+            cmap="RdBu_r",
+            center=0,
+            square=True,
+            linewidths=0.5,
+            cbar_kws={"shrink": 0.7},
+            ax=ax
         )
-        st.plotly_chart(fig, use_container_width=True)
+        ax.set_title("Matriz de Correlação de Pearson", fontsize=14, pad=12)
+        st.pyplot(fig)
+
+    else:
+        st.info("Selecione ao menos duas variáveis para calcular correlações.")
+
+
+    st.divider()
+
+    from scipy.stats import pearsonr
+
+    st.markdown("#### Correlação Total vs Parcial")
+    col_x = st.selectbox("Variável X", [""] + num_cols, index=0, key="partial_x")
+    col_y = st.selectbox("Variável Y", [""] + num_cols, index=0, key="partial_y")
+    col_z = st.selectbox("Controlar por (Z)", [""] + num_cols, index=0, key="partial_z")
+
+    if col_x and col_y and col_z and len(set([col_x, col_y, col_z])) == 3:
+        # Remove linhas com NaN nas 3 colunas
+        df_clean = df[[col_x, col_y, col_z]].dropna()
+
+        if df_clean.shape[0] < 3:
+            st.warning("Número insuficiente de observações válidas após remoção de valores ausentes.")
+        else:
+            r_total, p_total = pearsonr(df_clean[col_x], df_clean[col_y])
+            partial = pg.partial_corr(data=df_clean, x=col_x, y=col_y, covar=col_z)
+
+            result_table = pd.DataFrame({
+                "Correlação Total (r)": [round(r_total, 3)],
+                "p-valor Total": [round(p_total, 4)],
+                "Correlação Parcial (r)": [round(partial["r"].iloc[0], 3)],
+                "p-valor Parcial": [round(partial["p-val"].iloc[0], 4)]
+            })
+
+            st.dataframe(result_table)
+    else:
+        st.info("Selecione três variáveis distintas para comparar correlação total e parcial.")
+
+
+    st.divider()
+
+    st.markdown("#### Correlação por Subgrupo Categórico")
+    group_col = st.selectbox("Variável categórica para segmentar:", [""] + cat_cols, index=0, key="group_var")
+    group_corr_cols = st.multiselect(
+        "Variáveis numéricas para correlação por grupo:",
+        options=num_cols,
+        default=[],
+        key="group_corr_vars"
+    )
+    if group_col and len(group_corr_cols) >= 2:
+        grouped_corrs = []
+        for name, group in df.groupby(group_col):
+            try:
+                corr = group[group_corr_cols].corr()
+                corr = corr.where(np.triu(np.ones(corr.shape), k=1).astype(bool))
+                corr = corr.stack().reset_index()
+                corr.columns = ["Var1", "Var2", f"r_{name}"]
+                grouped_corrs.append(corr)
+            except Exception as e:
+                st.warning(f"Erro no grupo '{name}': {e}")
+        if grouped_corrs:
+            merged = grouped_corrs[0]
+            for other in grouped_corrs[1:]:
+                merged = pd.merge(merged, other, on=["Var1", "Var2"], how="outer")
+            st.dataframe(merged.round(2))
+        else:
+            st.warning("Não foi possível calcular correlações para os grupos selecionados.")
+    elif group_col:
+        st.info("Selecione ao menos duas variáveis numéricas.")
+    elif group_corr_cols:
+        st.info("Selecione a variável categórica para segmentação.")
+
+    st.divider()
+
+    st.markdown("#### Gráfico de Dispersão entre Pares")
+    selected_pair_cols = st.multiselect(
+        "Selecione variáveis para gráfico de pares:",
+        options=num_cols,
+        default=[],
+        key="pairplot_vars"
+    )
+    if len(selected_pair_cols) >= 2:
+        st.markdown("#### Gráfico de Dispersão com Regressão Linear (Pairplot)")
+
+        fig = sns.pairplot(df[selected_pair_cols], kind="reg", plot_kws={'line_kws':{'color':'red'}, 'scatter_kws': {'alpha': 0.5}})
+        st.pyplot(fig)
+
+    elif selected_pair_cols:
+        st.warning("Selecione ao menos duas variáveis.")
+
 
 
 # 3. Análise ANOVA
@@ -333,7 +361,11 @@ def show_anova_analysis(df):
         return
 
     # 1. Seleção da Variável Dependente
-    dv_col = st.selectbox("Variável Dependente (Numérica):", num_cols, key="anova_dv_col")
+    dv_col = st.selectbox("Variável Dependente (Numérica):", [""] + num_cols, index=0, key="anova_dv_col")
+    if dv_col == "":
+        st.info("Selecione a variável dependente para continuar.")
+        return
+
 
     # 2. Seleção do Tipo de ANOVA (Unifatorial ou Fatorial)
     anova_type = st.radio(
@@ -344,14 +376,17 @@ def show_anova_analysis(df):
 
     iv_cols = []
     if anova_type == "ANOVA Unifatorial (um fator)":
-        iv_col = st.selectbox("Variável Independente (Categórica - Fator):", cat_cols, key="anova_iv_col_unifactorial")
-        if iv_col:
-            iv_cols.append(iv_col)
-    else: # ANOVA Fatorial
-        iv_cols = st.multiselect("Variáveis Independentes (Categóricas - Fatores):", cat_cols, key="anova_iv_cols_factorial")
-        if len(iv_cols) < 2:
+        iv_col = st.selectbox("Variável Independente (Categórica - Fator):", [""] + cat_cols, index=0, key="anova_iv_col_unifactorial")
+        if iv_col == "":
+            st.info("Selecione a variável independente para continuar.")
+            return
+        iv_cols.append(iv_col)
+    else:  # ANOVA Fatorial
+        iv_cols = st.multiselect("Variáveis Independentes (Categóricas - Fatores):", cat_cols, default=[], key="anova_iv_cols_factorial")
+        if not iv_cols or len(iv_cols) < 2:
             st.warning("Para ANOVA Fatorial, selecione pelo menos duas variáveis independentes.")
             return
+
 
     # Garante que temos as seleções mínimas
     if not dv_col or not iv_cols:
@@ -446,8 +481,26 @@ def show_anova_analysis(df):
             model = ols(formula, data=df_anova).fit()
             # anova_lm(typ=2) é geralmente mais robusto para designs desbalanceados.
             # Inclui sum_sq, df, F, PR(>F) e para o Residual (Error) também
+            # Calcula a tabela ANOVA
             anova_table = anova_lm(model, typ=2)
-            st.dataframe(anova_table)
+
+            # Formata para melhor legibilidade
+            anova_table_fmt = (
+                anova_table
+                .reset_index()
+                .rename(columns={
+                    "index": "Termo",
+                    "sum_sq": "Soma dos Quadrados",
+                    "df": "GL",
+                    "F": "Estatística F",
+                    "PR(>F)": "Valor p"
+                })
+                .round(3)
+            )
+
+            st.markdown("#### Tabela ANOVA")
+            st.dataframe(anova_table_fmt)
+
 
             # Cálculo e Exibição do Tamanho do Efeito (Eta-Quadrado Parcial)
             st.write("#### Tamanho do Efeito (Eta-Quadrado Parcial, ηp²)")
@@ -476,21 +529,27 @@ def show_anova_analysis(df):
 
             # Verificação de significância para ativar post-hoc
             # Se for fatorial, verifica se há algum termo significativo.
+           # Verificação de significância para ativar post-hoc
             p_val_overall_significant = False
-            for term in st.session_state['anova_ivs_current']: # Checa os fatores principais
-                 if term in anova_table.index and anova_table.loc[term, 'PR(>F)'] < 0.05:
+
+            # Verifica fatores principais
+            for term in iv_cols:  # iv_cols contém os nomes originais
+                term_name = f"C({term})"
+                if term_name in anova_table.index and anova_table.loc[term_name, 'PR(>F)'] < 0.05:
                     p_val_overall_significant = True
                     break
-            # Verifica também interações se existirem
-            if len(st.session_state['anova_ivs_current']) > 1:
-                interaction_term = ':'.join([f'C({c})' for c in st.session_state['anova_ivs_current']])
+
+            # Verifica interação (se ANOVA fatorial)
+            if len(iv_cols) > 1:
+                interaction_term = ":".join([f"C({col})" for col in iv_cols])
                 if interaction_term in anova_table.index and anova_table.loc[interaction_term, 'PR(>F)'] < 0.05:
                     p_val_overall_significant = True
 
+            # Mensagem ao usuário
             if p_val_overall_significant:
-                st.success("Há pelo menos um efeito estatisticamente significativo. Prossiga para a análise Post-Hoc.")
+                st.success("✅ Há pelo menos um efeito estatisticamente significativo (p < 0.05). Prossiga para a análise Post-Hoc.")
             else:
-                st.info("Não há efeitos estatisticamente significativos em geral. Nenhuma análise post-hoc necessária.")
+                st.info("ℹ️ Nenhum dos termos da ANOVA foi estatisticamente significativo (p ≥ 0.05). Post-hoc não é necessário.")
 
 
         except Exception as e:
@@ -565,10 +624,26 @@ def show_anova_analysis(df):
                             if levene_p_val_results < 0.05:
                                 st.warning("Tukey HSD assume homogeneidade das variâncias. O teste de Levene indicou heterogeneidade. Considere Games-Howell.")
                             try:
-                                tukey_result = pairwise_tukeyhsd(endog=df_anova_results[dv_col_results], 
-                                                                 groups=df_anova_results[selected_posthoc_factor], 
-                                                                 alpha=0.05)
-                                st.text(tukey_result.summary().as_text())
+                                tukey_result = pairwise_tukeyhsd(
+                                    endog=df_anova_results[dv_col_results],
+                                    groups=df_anova_results[selected_posthoc_factor],
+                                    alpha=0.05
+                                )
+
+                                # Converter resultado do summary para DataFrame
+                                tukey_df = pd.DataFrame(data=tukey_result._results_table.data[1:], columns=tukey_result._results_table.data[0])
+
+                                # Adicionar coluna "Significativo?" com ✅ ou ❌
+                                tukey_df["Significativo?"] = tukey_df["p-adj"].apply(lambda p: "✅ Sim" if float(p) < 0.05 else "❌ Não")
+
+                                # Arredondar para exibição
+                                tukey_df[["meandiff", "p-adj", "lower", "upper"]] = tukey_df[["meandiff", "p-adj", "lower", "upper"]].astype(float).round(3)
+
+                                # Exibir tabela formatada
+                                st.markdown("#### Resultados do Tukey HSD (com destaque para significância)")
+                                st.dataframe(tukey_df)
+
+
                                 fig = tukey_result.plot_simultaneous()
                                 st.pyplot(fig)
                                 plt.close(fig)
@@ -578,12 +653,26 @@ def show_anova_analysis(df):
                             if levene_p_val_results >= 0.05:
                                 st.warning("Games-Howell é para variâncias heterogêneas. O teste de Levene indicou homogeneidade. Considere Tukey HSD.")
                             try:
-                                gameshowell_result = pairwise_gameshowell(data=df_anova_results, 
-                                                                           dv=dv_col_results, 
-                                                                           between=selected_posthoc_factor)
+                                gameshowell_result = pairwise_gameshowell(
+                                    data=df_anova_results,
+                                    dv=dv_col_results,
+                                    between=selected_posthoc_factor
+                                )
+
+                                # Adiciona coluna de significância
+                                gameshowell_result["Significativo?"] = gameshowell_result["pval"].apply(lambda p: "✅ Sim" if p < 0.05 else "❌ Não")
+
+                                # Arredonda valores para apresentação
+                                for col in ["diff", "se", "pval", "ci_low", "ci_high"]:
+                                    if col in gameshowell_result.columns:
+                                        gameshowell_result[col] = gameshowell_result[col].round(3)
+
+                                st.markdown("#### Resultados do Games-Howell (com destaque para significância)")
                                 st.dataframe(gameshowell_result)
+
                             except Exception as e:
                                 st.error(f"Erro ao executar Games-Howell: {e}")
+
             else:
                 st.info("Nenhum fator principal significativo para análise post-hoc individual.")
 
@@ -643,6 +732,7 @@ def show_anova_analysis(df):
 
 
 # 4. Testes T
+
 def show_t_tests(df):
     st.subheader("Testes T")
     st.info("Realize testes t para comparar médias de uma ou duas amostras.")
@@ -660,19 +750,20 @@ def show_t_tests(df):
         key="t_test_type"
     )
 
-    # Teste T de Uma Amostra
     if test_type == "Teste T de Uma Amostra":
         st.markdown("#### Teste T de Uma Amostra")
-        one_sample_col = st.selectbox("Selecione a variável numérica:", num_cols, key="one_sample_col")
+        one_sample_col = st.selectbox("Selecione a variável numérica:", [""] + num_cols, index=0, key="one_sample_col")
         pop_mean = st.number_input("Média da população a ser testada (μ₀):", value=0.0, key="pop_mean")
 
-        if st.button("Executar Teste T de Uma Amostra", key="run_one_sample_t_test"):
-            if one_sample_col:
+        if one_sample_col == "":
+            st.info("Selecione uma variável numérica.")
+        else:
+            if st.button("Executar Teste T de Uma Amostra", key="run_one_sample_t_test"):
                 sample_data = df[one_sample_col].dropna()
                 if sample_data.empty:
                     st.warning("A coluna selecionada não possui dados válidos para o teste de uma amostra.")
                     return
-                
+
                 stat, p = stats.ttest_1samp(sample_data, pop_mean)
                 d = cohens_d_one_sample(sample_data, pop_mean)
 
@@ -683,157 +774,92 @@ def show_t_tests(df):
                 st.write(f"Valor p: {p:.3f}")
                 st.write(f"Graus de Liberdade: {len(sample_data) - 1}")
                 st.write(f"Cohen's d (Tamanho do Efeito): {d:.3f}")
-                
+
                 if p < 0.05:
                     st.success(f"A média da amostra é significativamente diferente da média da população ({pop_mean}).")
                 else:
                     st.info(f"Não há diferença significativa entre a média da amostra e a média da população ({pop_mean}).")
-            else:
-                st.warning("Selecione uma variável numérica.")
 
-    # Teste T de Duas Amostras (Independentes)
     elif test_type == "Teste T de Duas Amostras (Independentes)":
         st.markdown("#### Teste T de Duas Amostras Independentes")
-        dv_col_ind = st.selectbox("Variável Dependente (Numérica):", num_cols, key="dv_col_ind")
-        group_col_ind = st.selectbox("Variável de Agrupamento (Categórica, 2 grupos):", cat_cols, key="group_col_ind")
+        dv_col_ind = st.selectbox("Variável Dependente (Numérica):", [""] + num_cols, index=0, key="dv_col_ind")
+        group_col_ind = st.selectbox("Variável de Agrupamento (Categórica, 2 grupos):", [""] + cat_cols, index=0, key="group_col_ind")
 
-        if group_col_ind:
+        if dv_col_ind == "" or group_col_ind == "":
+            st.info("Selecione as duas variáveis.")
+        else:
             unique_groups = df[group_col_ind].dropna().unique().tolist()
             if len(unique_groups) != 2:
-                st.warning("A variável de agrupamento deve ter exatamente dois valores únicos para o teste t independente.")
+                st.warning("A variável de agrupamento deve ter exatamente dois valores únicos.")
                 if len(unique_groups) > 2:
                     st.info(f"Variável '{group_col_ind}' tem mais de 2 grupos: {unique_groups}. Considere usar ANOVA.")
                 return
 
-            group1_name = unique_groups[0]
-            group2_name = unique_groups[1]
+            group1_name, group2_name = unique_groups
             st.write(f"Grupos detectados: '{group1_name}' e '{group2_name}'.")
 
             if st.button("Executar Teste T Independente", key="run_independent_t_test"):
-                if dv_col_ind and group_col_ind:
-                    # Remove NaNs apenas para as colunas e linhas relevantes
-                    df_filtered = df[[dv_col_ind, group_col_ind]].dropna()
-                    
-                    group1_data = df_filtered[df_filtered[group_col_ind] == group1_name][dv_col_ind]
-                    group2_data = df_filtered[df_filtered[group_col_ind] == group2_name][dv_col_ind]
+                df_filtered = df[[dv_col_ind, group_col_ind]].dropna()
+                group1_data = df_filtered[df_filtered[group_col_ind] == group1_name][dv_col_ind]
+                group2_data = df_filtered[df_filtered[group_col_ind] == group2_name][dv_col_ind]
 
-                    if group1_data.empty or group2_data.empty:
-                        st.warning("Um dos grupos está vazio após a remoção de valores faltantes. Verifique seus dados.")
-                        return
+                if group1_data.empty or group2_data.empty:
+                    st.warning("Um dos grupos está vazio após a remoção de valores faltantes.")
+                    return
 
-                    st.write(f"### Resultados do Teste T Independente para '{dv_col_ind}'")
-                    
-                    st.write("#### Estatísticas Descritivas por Grupo")
-                    st.write(f"**Grupo '{group1_name}':** Média={group1_data.mean():.3f}, DP={group1_data.std():.3f}, N={len(group1_data)}")
-                    st.write(f"**Grupo '{group2_name}':** Média={group2_data.mean():.3f}, DP={group2_data.std():.3f}, N={len(group2_data)}")
+                st.write("#### Estatísticas Descritivas por Grupo")
+                st.write(f"**Grupo '{group1_name}':** Média={group1_data.mean():.3f}, DP={group1_data.std():.3f}, N={len(group1_data)}")
+                st.write(f"**Grupo '{group2_name}':** Média={group2_data.mean():.3f}, DP={group2_data.std():.3f}, N={len(group2_data)}")
 
-                    # Teste de Levene para homogeneidade de variâncias
-                    stat_levene, p_levene = stats.levene(group1_data, group2_data)
-                    st.write("#### Teste de Homogeneidade de Variâncias (Levene's Test)")
-                    st.write(f"Estatística de Levene: {stat_levene:.3f}")
-                    st.write(f"Valor p de Levene: {p_levene:.3f}")
+                stat_levene, p_levene = stats.levene(group1_data, group2_data)
+                equal_var = p_levene >= 0.05
+                st.write("#### Teste de Homogeneidade de Variâncias (Levene)")
+                st.write(f"Estatística: {stat_levene:.3f}, Valor p: {p_levene:.3f}")
+                st.success("Variâncias homogêneas.") if equal_var else st.warning("Variâncias não homogêneas (usando Welch).")
 
-                    equal_var = True
-                    if p_levene < 0.05:
-                        st.warning("Variâncias NÃO são homogêneas (p < 0.05). Será utilizado o Teste t de Welch (não assume igualdade de variâncias).")
-                        equal_var = False
-                    else:
-                        st.success("Variâncias são homogêneas (p >= 0.05).")
+                stat_t, p_t = stats.ttest_ind(group1_data, group2_data, equal_var=equal_var)
+                d = cohens_d(group1_data, group2_data)
 
-                    # Executa o teste t
-                    stat_t, p_t = stats.ttest_ind(group1_data, group2_data, equal_var=equal_var)
-                    d = cohens_d(group1_data, group2_data)
+                st.write("#### Resultado do Teste T")
+                st.write(f"Estatística T: {stat_t:.3f}")
+                st.write(f"Valor p: {p_t:.3f}")
+                st.write(f"Cohen's d: {d:.3f}")
 
-                    st.write("#### Resultados do Teste T")
-                    st.write(f"Estatística T: {stat_t:.3f}")
-                    st.write(f"Valor p: {p_t:.3f}")
-                    st.write(f"Cohen's d (Tamanho do Efeito): {d:.3f}")
-
-                    if p_t < 0.05:
-                        st.success(f"Há uma diferença significativa na média de '{dv_col_ind}' entre '{group1_name}' e '{group2_name}'.")
-                    else:
-                        st.info(f"Não há diferença significativa na média de '{dv_col_ind}' entre '{group1_name}' e '{group2_name}'.")
-
-                    # Boxplot
-                    st.write("#### Boxplot por Grupo")
-                    fig, ax = plt.subplots(figsize=(8, 6))
-                    sns.boxplot(data=df_filtered, x=group_col_ind, y=dv_col_ind, ax=ax, palette='Pastel1')
-                    sns.stripplot(data=df_filtered, x=group_col_ind, y=dv_col_ind, color='black', size=4, jitter=True, ax=ax)
-                    ax.set_title(f'Boxplot de {dv_col_ind} por {group_col_ind}')
-                    ax.set_xlabel(group_col_ind)
-                    ax.set_ylabel(dv_col_ind)
-                    st.pyplot(fig)
-                    plt.close(fig)
-
+                if p_t < 0.05:
+                    maior = group1_name if group1_data.mean() > group2_data.mean() else group2_name
+                    st.success(f"Há diferença significativa: o grupo **{maior}** tem média maior.")
                 else:
-                    st.warning("Selecione a variável dependente e a variável de agrupamento.")
-        else:
-            st.info("Nenhuma coluna categórica disponível para agrupamento.")
+                    st.info("Não foi encontrada diferença significativa entre os grupos.")
 
-    # Teste T de Amostras Pareadas
     elif test_type == "Teste T de Amostras Pareadas":
         st.markdown("#### Teste T de Amostras Pareadas")
-        st.info("Este teste é para comparar duas medidas da *mesma* amostra em diferentes pontos no tempo ou sob diferentes condições (e.g., antes e depois).")
-        
-        # Colunas numéricas que podem ser candidatas a pareadas
-        num_cols_for_paired = [col for col in num_cols if df[col].nunique() > 1] # Pelo menos 2 valores únicos
+        paired_cols = [col for col in num_cols if df[col].nunique() > 1]
+        col_pre = st.selectbox("Variável 'Pré':", [""] + paired_cols, index=0, key="col_pre_paired")
+        col_post = st.selectbox("Variável 'Pós':", [""] + paired_cols, index=0, key="col_post_paired")
 
-        col_pre = st.selectbox("Variável 'Pré' (e.g., antes da intervenção):", num_cols_for_paired, key="col_pre_paired")
-        col_post = st.selectbox("Variável 'Pós' (e.g., depois da intervenção):", num_cols_for_paired, key="col_post_paired")
-
-        if st.button("Executar Teste T Pareado", key="run_paired_t_test"):
-            if col_pre and col_post and col_pre != col_post:
-                # Garante que apenas as linhas onde ambas as colunas têm dados sejam usadas
+        if col_pre == "" or col_post == "":
+            st.info("Selecione ambas as variáveis.")
+        elif col_pre == col_post:
+            st.warning("As variáveis devem ser diferentes.")
+        else:
+            if st.button("Executar Teste T Pareado", key="run_paired_t_test"):
                 df_paired = df[[col_pre, col_post]].dropna()
-
                 if df_paired.empty:
-                    st.warning("Não há pares de dados válidos para o teste pareado após remover valores faltantes.")
+                    st.warning("Não há dados suficientes para o teste pareado.")
                     return
 
                 stat, p = stats.ttest_rel(df_paired[col_pre], df_paired[col_post])
                 d = cohens_d_paired(df_paired[col_pre], df_paired[col_post])
 
-                st.write(f"### Resultados do Teste T Pareado para '{col_pre}' vs '{col_post}'")
-                st.write(f"Média de '{col_pre}': {df_paired[col_pre].mean():.3f}")
-                st.write(f"Média de '{col_post}': {df_paired[col_post].mean():.3f}")
-                st.write(f"Média da Diferença (Pós - Pré): {(df_paired[col_post] - df_paired[col_pre]).mean():.3f}")
+                st.write(f"### Resultado do Teste T Pareado: '{col_pre}' vs '{col_post}'")
                 st.write(f"Estatística T: {stat:.3f}")
                 st.write(f"Valor p: {p:.3f}")
-                st.write(f"Graus de Liberdade: {len(df_paired) - 1}")
-                st.write(f"Cohen's d (Tamanho do Efeito): {d:.3f}")
+                st.write(f"Cohen's d: {d:.3f}")
 
                 if p < 0.05:
-                    st.success(f"Há uma diferença estatisticamente significativa entre as médias de '{col_pre}' e '{col_post}'.")
+                    st.success("Diferença significativa entre as condições.")
                 else:
-                    st.info(f"Não há diferença significativa entre as médias de '{col_pre}' e '{col_post}'.")
-
-                # Gráfico de Dispersão com Linha de Conexão (Paired Plot)
-                st.markdown("#### Gráfico de Dispersão dos Pares")
-                fig, ax = plt.subplots(figsize=(8, 6))
-                
-                # Crie um DataFrame para o gráfico que facilite a visualização pareada
-                plot_df = pd.DataFrame({
-                    'Condição': [col_pre] * len(df_paired) + [col_post] * len(df_paired),
-                    'Valor': pd.concat([df_paired[col_pre], df_paired[col_post]]),
-                    'ID': list(range(len(df_paired))) * 2 # Para conectar os pontos
-                })
-
-                sns.lineplot(data=plot_df, x='Condição', y='Valor', units='ID', 
-                             estimator=None, color='gray', alpha=0.6, ax=ax, marker='o')
-                sns.pointplot(data=plot_df, x='Condição', y='Valor', 
-                              estimator='mean', color='blue', ax=ax, markers='D', linestyles='--')
-
-                ax.set_title(f'Comparação de {col_pre} vs {col_post} (Medidas Repetidas)')
-                ax.set_xlabel('Condição')
-                ax.set_ylabel('Valor')
-                st.pyplot(fig)
-                plt.close(fig)
-
-            elif col_pre == col_post:
-                st.warning("Por favor, selecione duas variáveis diferentes para o teste de medidas repetidas.")
-            else:
-                st.warning("Selecione ambas as variáveis para o teste pareado.")
-
+                    st.info("Não há diferença estatisticamente significativa.")
 
 # 5. Clustering
 def show_clustering_analysis(df):
@@ -992,6 +1018,7 @@ def show_clustering_analysis(df):
             st.success("Coluna 'Cluster_KMeans' adicionada ao DataFrame processado na sessão.")
 
 def show_exploratory_analysis():
+    key_prefix = "ea_"
     st.header("📊 Análise Exploratória de Dados")
     if st.session_state['df_processed'] is None or st.session_state['df_processed'].empty:
         st.warning("⚠️ Dados não carregados ou pré-processados. Por favor, complete as etapas anteriores.")
@@ -1016,20 +1043,116 @@ def show_exploratory_analysis():
         st.text(s)
 
     # 2️⃣ 🔥 NOVO PAINEL - Análise Descritiva dos Dados Numéricos
-    with st.expander("📊 Análise Descritiva dos Dados Numéricos"):
-        st.subheader("Estatísticas Descritivas - Variáveis Numéricas")
-        
-        num_cols = df_ea.select_dtypes(include=np.number).columns.tolist()
-        selected_num_cols = st.multiselect(
-            "Selecione as variáveis numéricas para visualizar as estatísticas descritivas:",
-            num_cols,
-            default=num_cols
-        )
 
-        if selected_num_cols:
-            st.dataframe(df_ea[selected_num_cols].describe())
+    with st.expander("📊 Análise Descritiva dos Dados Numéricos"):
+        key_prefix = "ea_"
+        num_cols = df_ea.select_dtypes(include=["number"]).columns.tolist()
+
+        if not num_cols:
+            st.info("Nenhuma variável numérica disponível.")
         else:
-            st.info("Selecione pelo menos uma variável numérica.")
+            selected_num_cols = st.multiselect(
+                "Selecione as variáveis numéricas que deseja explorar:",
+                options=num_cols,
+                default=[],
+                key=key_prefix + "desc_num_multiselect"
+            )
+
+            if not selected_num_cols:
+                st.info("Selecione pelo menos uma variável.")
+            else:
+                desc_df = df_ea[selected_num_cols].describe().T
+
+                # Novos indicadores
+                desc_df["coef_var"] = desc_df["std"] / desc_df["mean"]
+                desc_df["amplitude"] = desc_df["max"] - desc_df["min"]
+                desc_df["curtose"] = df_ea[selected_num_cols].kurtosis()
+                desc_df["assimetria"] = df_ea[selected_num_cols].skew()
+
+                st.markdown("#### Estatísticas Descritivas com Indicadores Ampliados")
+                st.dataframe(desc_df)
+
+                st.markdown("#### Diagnóstico Interpretativo de Curtose e Assimetria")
+                for var in selected_num_cols:
+                    skew = desc_df.loc[var, "assimetria"]
+                    kurt = desc_df.loc[var, "curtose"]
+
+                    # Interpretação da assimetria
+                    if abs(skew) < 0.5:
+                        skew_txt = "distribuição aproximadamente simétrica"
+                    elif skew >= 0.5:
+                        skew_txt = "distribuição assimétrica à direita (cauda longa à direita)"
+                    else:
+                        skew_txt = "distribuição assimétrica à esquerda (cauda longa à esquerda)"
+
+                    # Interpretação da curtose
+                    if abs(kurt) < 0.5:
+                        kurt_txt = "curtose próxima da normal (mesocúrtica)"
+                    elif kurt > 0.5:
+                        kurt_txt = "distribuição leptocúrtica (pontuda)"
+                    else:
+                        kurt_txt = "distribuição platicúrtica (achatada)"
+
+                    st.markdown(f"📌 **{var}**: {skew_txt} e {kurt_txt}.")
+
+                st.markdown("#### Histogramas")
+                for col in selected_num_cols:
+                    st.plotly_chart(px.histogram(df_ea, x=col, nbins=30, title=f"Histograma - {col}"))
+
+                st.markdown("#### Boxplots")
+                for col in selected_num_cols:
+                    st.plotly_chart(px.box(df_ea, y=col, points="all", title=f"Boxplot - {col}"))
+
+         # Análise Descritiva de Variáveis Categóricas
+    with st.expander("📊 Análise Descritiva dos Dados Categóricos"):
+        cat_cols = df_ea.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+
+        if not cat_cols:
+            st.info("Nenhuma variável categórica disponível.")
+        else:
+            selected_cat_cols = st.multiselect(
+                "Selecione as variáveis categóricas que deseja explorar:",
+                options=cat_cols,
+                default=[],
+                key=key_prefix + "desc_cat_multiselect"
+            )
+
+            if not selected_cat_cols:
+                st.info("Selecione pelo menos uma variável.")
+            else:
+                for col in selected_cat_cols:
+                    st.markdown(f"### 📌 {col}")
+
+                    freq_abs = df_ea[col].value_counts(dropna=False)
+                    freq_rel = df_ea[col].value_counts(normalize=True, dropna=False) * 100
+                    freq_df = pd.DataFrame({
+                        "Frequência Absoluta": freq_abs,
+                        "Frequência Relativa (%)": freq_rel.round(2)
+                    })
+
+                    st.dataframe(freq_df)
+
+                    num_unique = df_ea[col].nunique(dropna=False)
+                    moda = df_ea[col].mode().iloc[0] if not df_ea[col].mode().empty else "N/A"
+
+                    # Diagnóstico textual
+                    total = len(df_ea[col])
+                    dominant_cat = freq_abs.idxmax()
+                    dominant_pct = freq_rel[dominant_cat]
+
+                    if num_unique == 1:
+                        interpret = "📌 A variável é constante — possui apenas uma categoria."
+                    elif dominant_pct > 90:
+                        interpret = f"📌 A categoria '{dominant_cat}' domina com {dominant_pct:.1f}% dos casos."
+                    elif num_unique > 20:
+                        interpret = f"📌 A variável tem alta cardinalidade ({num_unique} categorias)."
+                    else:
+                        interpret = f"📌 Distribuição razoavelmente balanceada com {num_unique} categorias. Moda: '{moda}'."
+
+                    st.info(interpret)
+           
+
+
 
     # 3️⃣ Análise de Contingência
     with st.expander("📊 Análise de Contingência e Frequência"):
