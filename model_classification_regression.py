@@ -1,4 +1,3 @@
-#ok
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,7 +7,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from fpdf import FPDF
 import io
-
 from sklearn.model_selection import train_test_split, cross_val_score, GridSearchCV, KFold
 from sklearn.preprocessing import LabelEncoder, StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
@@ -26,6 +24,36 @@ from sklearn.metrics import (
 from xgboost import XGBClassifier, XGBRegressor
 from lightgbm import LGBMClassifier, LGBMRegressor
 import plotly.graph_objs as go
+import plotly.express as px # Added for unsupervised plots
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
+from sklearn.mixture import GaussianMixture
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+
+def reset_machine_learning_state():
+    keys_to_reset = [
+        "reg_target", "reg_features", "reg_test_size", "reg_random_state",
+        "reg_gridsearch", "reg_enable_shap", "reg_model_select", "train_reg_model_button",
+        "reg_shap_var", "reg_obs_idx", "download_reg_csv", "generate_reg_pdf_button",
+
+        "clf_target", "clf_features", "clf_test_size", "clf_random_state",
+        "clf_gridsearch", "clf_enable_shap", "clf_model_select", "train_clf_model_button",
+        "clf_shap_class_select", "clf_shap_var", "clf_obs_idx", "download_clf_csv", "generate_clf_pdf_button",
+
+        "trained_reg_model", "reg_model_metrics", "reg_y_test", "reg_X_test", "reg_X_train", "reg_y_train",
+        "reg_task_type", "reg_model_option", "reg_enable_gridsearch", "reg_best_params_found",
+        "reg_fig_summary", "reg_fig_waterfall", "reg_fig_scatter_shap",
+
+        "trained_clf_model", "clf_model_metrics", "clf_y_test", "clf_X_test", "clf_X_train", "clf_y_train",
+        "clf_task_type", "clf_model_option", "clf_enable_gridsearch", "clf_best_params_found",
+        "clf_original_target_values", "clf_label_encoder_mapping",
+        "clf_fig_summary", "clf_fig_waterfall", "clf_fig_scatter_shap",
+    ]
+
+    for k in keys_to_reset:
+        if k in st.session_state:
+            del st.session_state[k]
 
 def compute_shap_values(model, X_sampled, model_type="tree", predict_fn=None, class_index=None):
     if model_type == "tree":
@@ -80,8 +108,6 @@ def compute_shap_values(model, X_sampled, model_type="tree", predict_fn=None, cl
     else:
         raise ValueError("Tipo de modelo não suportado para SHAP.")
 
-# Função de gráfico scatter SHAP
-
 def shap_scatter_plot(shap_values, feature_idx, feature_names):
     x = shap_values.values[:, feature_idx]
     y = shap_values.base_values + shap_values.values.sum(axis=1)
@@ -102,31 +128,12 @@ def shap_scatter_plot(shap_values, feature_idx, feature_names):
     st.plotly_chart(fig)
     return fig
 
-
-
-def shap_scatter_plot(shap_values, feature_idx, feature_names):
-    x = shap_values.values[:, feature_idx]
-    # Y-axis should represent the actual model output (f(x)) = base_value + sum of SHAP values
-    y = shap_values.base_values + shap_values.values.sum(axis=1)
-
-    color = shap_values.values[:, feature_idx]
-
-    fig = go.Figure(data=go.Scatter(
-        x=x, y=y,
-        mode='markers',
-        marker=dict(color=color, colorscale='RdBu', showscale=True),
-        hovertemplate=f'{feature_names[feature_idx]} SHAP: %{{x:.3f}}<br>Model Output (f(x)): %{{y:.3f}}<extra></extra>'
-    ))
-    fig.update_layout(
-        title=f'SHAP Scatter Plot - Feature: {feature_names[feature_idx]}',
-        xaxis_title=f'SHAP value for {feature_names[feature_idx]}',
-        yaxis_title='Model Output (f(x))'
-    )
-    st.plotly_chart(fig)
-    return fig
-
-# Renomeando a função para ser mais genérica e adaptada à nova estrutura
 def show_machine_learning_page():
+    from sklearn.preprocessing import StandardScaler
+    if st.button("🔄 Limpar e reiniciar", key="ml_reset_button"):
+        reset_machine_learning_state()
+        st.rerun()
+
     st.subheader("📈 Modelos Supervisionados e Não-Supervisionados com Explicabilidade e Hiperparametrização")
 
     df = st.session_state.get("df_processed", None)
@@ -140,7 +147,6 @@ def show_machine_learning_page():
     if 'clf_model_metrics' not in st.session_state:
         st.session_state['clf_model_metrics'] = []
 
-    # Novo seletor principal para os tipos de modelo
     model_category_selection = st.radio(
         "Selecione a Categoria de Modelo:",
         ["Modelos Preditivos (Regressão)", "Modelos de Classificação", "Modelos Não-Supervisionados"],
@@ -152,25 +158,35 @@ def show_machine_learning_page():
             st.markdown("### 📊 Configuração de Regressão")
             st.markdown("Configure os parâmetros do modelo de regressão. Use hiperparametrização (GridSearchCV) se desejar encontrar os melhores hiperparâmetros.")
 
-            target = st.selectbox("🎯 Variável alvo (target) para Regressão:", df.columns, key="reg_target")
-            features = st.multiselect("📌 Variáveis preditoras (features) para Regressão:", [col for col in df.columns if col != target], key="reg_features")
+            # Filter for numeric columns for regression target and features
+            numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
+
+            # Modify selectbox for target to include a placeholder
+            reg_target_options = ["Selecione a variável alvo..."] + numeric_cols
+            target = st.selectbox("🎯 Variável alvo (target) para Regressão:", reg_target_options, key="reg_target")
+
+            # Check if placeholder is selected
+            if target == "Selecione a variável alvo...":
+                target = None
+
+            # Modify multiselect for features to include only numeric columns
+            # Ensure target is not in feature options
+            reg_feature_options = [col for col in numeric_cols if col != target]
+            features = st.multiselect("📌 Variáveis preditoras (features) para Regressão (apenas numéricas):", reg_feature_options, key="reg_features")
+
 
             if not target or not features:
-                st.info("Selecione a variável alvo e pelo menos uma preditora para a regressão.")
+                st.info("Selecione a variável alvo numérica e pelo menos uma preditora numérica para a regressão.")
                 return
 
             test_size = st.slider("🔀 Proporção de dados para teste", 0.1, 0.5, 0.2, 0.05, key="reg_test_size")
             random_state = st.number_input("Seed (random_state)", min_value=0, value=42, step=1, key="reg_random_state")
             enable_gridsearch = st.checkbox("🔍 Ativar GridSearchCV para hiperparametrização", key="reg_gridsearch")
-            
-            # --- New SHAP toggle ---
-            enable_shap = st.checkbox("⚙️ Ativar Explicabilidade com SHAP (pode ser computacionalmente intensivo)", value=False, key="reg_enable_shap")
-            # --- End New SHAP toggle ---
 
-            # Criando cópia do dataframe para evitar SettingWithCopyWarning e manipulação segura
+            enable_shap = st.checkbox("⚙️ Ativar Explicabilidade com SHAP (pode ser computacionalmente intensivo)", value=False, key="reg_enable_shap")
+
             df_model = df.copy()
 
-            # TRATAMENTO DE NaN NA VARIÁVEL ALVO (REGRESSÃO)
             if df_model[target].isnull().any():
                 st.warning(f"A variável alvo '{target}' contém valores ausentes. Preenchendo com a média.")
                 df_model[target] = df_model[target].fillna(df_model[target].mean())
@@ -179,7 +195,6 @@ def show_machine_learning_page():
             y = df_model[target]
             task_type = "regressao"
 
-            # Preprocessing Pipeline with Imputation
             numeric_features = X.select_dtypes(include=np.number).columns
             categorical_features = X.select_dtypes(include='object').columns
 
@@ -263,16 +278,16 @@ def show_machine_learning_page():
                     st.session_state['reg_model_option'] = model_option
                     st.session_state['reg_enable_gridsearch'] = enable_gridsearch
                     st.session_state['reg_best_params_found'] = best_params_found
-                    st.session_state['reg_original_target_values'] = None # Not applicable for regression
-                    st.session_state['reg_label_encoder_mapping'] = None # Not applicable for regression
-                    # st.session_state['reg_enable_shap'] = enable_shap # This is already set by the widget key
+                    st.session_state['reg_original_target_values'] = None
+                    st.session_state['reg_label_encoder_mapping'] = None
+                    # The value of enable_shap is already available from the checkbox widget via its key
+                    # st.session_state['reg_enable_shap'] = enable_shap # REMOVED: This line caused the error
 
-                    # Calculate and store metrics for the comparison table
                     y_pred = trained_model.predict(X_test)
                     current_r2 = r2_score(y_test, y_pred)
                     current_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
                     current_mae = mean_absolute_error(y_test, y_pred)
-                    
+
                     cv_scores = cross_val_score(trained_model, X, y, cv=KFold(n_splits=5, shuffle=True, random_state=random_state), scoring='r2', n_jobs=-1)
                     current_mean_cv_score = np.mean(cv_scores)
 
@@ -284,7 +299,7 @@ def show_machine_learning_page():
                         'Media_CV_R2': f"{current_mean_cv_score:.4f}",
                         'GridSearchCV_Ativado': enable_gridsearch,
                         'Melhores_Hiperparametros': str(best_params_found),
-                        'SHAP_Ativado': enable_shap
+                        'SHAP_Ativado': enable_shap # This correctly uses the value from the checkbox
                     }
                     st.session_state['reg_model_metrics'].append(model_metrics_entry)
 
@@ -300,7 +315,9 @@ def show_machine_learning_page():
                 features = st.session_state['reg_features']
                 enable_gridsearch = st.session_state['reg_enable_gridsearch']
                 best_params_found = st.session_state['reg_best_params_found']
-                current_enable_shap = st.session_state['reg_enable_shap'] # Retrieve SHAP toggle state
+                # Access the enable_shap state directly from the session_state managed by the widget
+                current_enable_shap = st.session_state.get('reg_enable_shap', False) # Safely get the value
+
 
                 y_pred = trained_model.predict(X_test)
 
@@ -320,8 +337,7 @@ def show_machine_learning_page():
 
                 st.markdown("### 🔁 Validação Cruzada")
                 cv = KFold(n_splits=5, shuffle=True, random_state=random_state)
-                # Use X e y originais (tratados de NaN) para validação cruzada
-                # Re-obtenha X e y do df_model (que já teve o target tratado)
+                # Ensure current_X_for_cv and current_y_for_cv are consistent
                 current_X_for_cv = df_model[features]
                 current_y_for_cv = df_model[target]
                 scores = cross_val_score(trained_model, current_X_for_cv, current_y_for_cv, cv=cv, scoring='r2', n_jobs=-1)
@@ -329,7 +345,6 @@ def show_machine_learning_page():
                 st.write("Média dos Scores de Validação Cruzada:", np.mean(scores))
                 st.write("Desvio Padrão dos Scores de Validação Cruzada:", np.std(scores))
 
-                # --- Conditionally generate SHAP plots ---
                 if current_enable_shap:
                     st.markdown("### 🧠 Explicabilidade com SHAP")
                     try:
@@ -354,10 +369,10 @@ def show_machine_learning_page():
                             cleaned_feature_names.append(name)
 
                         X_test_df_shap = pd.DataFrame(X_test_preprocessed, columns=cleaned_feature_names)
-                        model_for_shap = trained_model.named_steps['regressor'] 
+                        model_for_shap = trained_model.named_steps['regressor']
 
                         if isinstance(model_for_shap, (RandomForestRegressor, XGBRegressor, LGBMRegressor)):
-                            explainer = shap.TreeExplainer(model_for_shap) 
+                            explainer = shap.TreeExplainer(model_for_shap)
                             shap_values = explainer(X_test_df_shap)
                         elif isinstance(model_for_shap, LinearRegression):
                             background_data_for_linear = trained_model.named_steps['preprocessor'].transform(X_train)
@@ -374,13 +389,13 @@ def show_machine_learning_page():
                         else:
                             st.warning("O modelo selecionado não é um modelo de árvore nem linear. Usando `KernelExplainer` do SHAP, que pode ser muito lento para grandes conjuntos de dados. **Recomenda-se reduzir o tamanho do conjunto de dados de teste** para explicabilidade SHAP para este modelo.")
                             X_test_df_shap_sampled = X_test_df_shap
-                            if X_test_df_shap.shape[0] > 100: 
-                                 X_test_df_shap_sampled = shap.utils.sample(X_test_df_shap, 100, random_state=random_state) 
+                            if X_test_df_shap.shape[0] > 100:
+                                 X_test_df_shap_sampled = shap.utils.sample(X_test_df_shap, 100, random_state=random_state)
                                  st.info(f"Amostrando {X_test_df_shap_sampled.shape[0]} observações para `KernelExplainer` para melhorar o desempenho.")
 
                             background_data = trained_model.named_steps['preprocessor'].transform(X_train)
-                            if background_data.shape[0] > 50: 
-                                background_data = shap.utils.sample(background_data, 50, random_state=random_state) 
+                            if background_data.shape[0] > 50:
+                                background_data = shap.utils.sample(background_data, 50, random_state=random_state)
 
                             explainer = shap.KernelExplainer(model_for_shap.predict, background_data)
                             shap_values_raw = explainer.shap_values(X_test_df_shap_sampled)
@@ -420,11 +435,10 @@ def show_machine_learning_page():
                         st.info("Isso pode ocorrer devido a incompatibilidades de versão do SHAP, modelos não totalmente suportados, ou problemas de desempenho com grandes volumes de dados. Por favor, tente um modelo diferente ou verifique a versão da biblioteca SHAP.")
                 else:
                     st.info("A geração de gráficos SHAP está desativada. Ative o checkbox 'Ativar Explicabilidade com SHAP' para visualizá-los.")
-                    # Clear SHAP figures from session state if not enabled in the current run (optional but good practice)
-                    if 'reg_fig_summary' in st.session_state: del st.session_state['reg_fig_summary']
-                    if 'reg_fig_waterfall' in st.session_state: del st.session_state['reg_fig_waterfall']
-                    if 'reg_fig_scatter_shap' in st.session_state: del st.session_state['reg_fig_scatter_shap']
-                # --- End Conditional SHAP plots ---
+                    # Clear SHAP related figures from session state if SHAP is disabled
+                    for k in ['reg_fig_summary', 'reg_fig_waterfall', 'reg_fig_scatter_shap']:
+                        if k in st.session_state:
+                            del st.session_state[k]
 
                 st.markdown("### 📥 Exportar Resultados e Relatório")
                 metrics = {
@@ -468,7 +482,7 @@ def show_machine_learning_page():
 
                     pdf.set_font("Arial", size=12, style='B')
                     pdf.cell(200, 10, txt="Gráficos de Avaliação:", ln=True)
-                    if fig_resid:
+                    if 'fig_resid' in locals() and fig_resid: # Check if fig_resid was created
                         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
                             fig_resid.savefig(tmp_file.name)
                             pdf.image(tmp_file.name, x=10, w=180)
@@ -477,10 +491,9 @@ def show_machine_learning_page():
                         os.unlink(tmp_file.name)
                         pdf.ln(5)
 
-                    # --- Conditionally add SHAP plots to PDF ---
                     pdf.set_font("Arial", size=12, style='B')
                     pdf.cell(200, 10, txt="Gráficos de Explicabilidade (SHAP):", ln=True)
-                    if current_enable_shap: # Only attempt to add if SHAP was enabled
+                    if current_enable_shap:
                         pdf.set_font("Arial", size=12)
                         pdf.multi_cell(0, 7, txt="Os gráficos SHAP (Summary Plot, Scatter Plot e Waterfall Plot) fornecem insights sobre a importância das features e a contribuição individual de cada feature para as previsões do modelo. Eles estão disponíveis na interface da aplicação para exploração interativa. Gráficos SHAP podem não estar disponíveis em PDF se houve um erro na geração na interface.")
 
@@ -498,14 +511,12 @@ def show_machine_learning_page():
                     else:
                         pdf.set_font("Arial", size=12)
                         pdf.multi_cell(0, 7, txt="A geração de gráficos SHAP estava desativada para este modelo e, portanto, não foram incluídos neste relatório PDF.")
-                    # --- End Conditionally add SHAP plots to PDF ---
 
                     pdf.output("relatorio_regressao.pdf")
                     with open("relatorio_regressao.pdf", "rb") as f:
                         pdf_bytes = f.read()
                         st.download_button("📄 Baixar Relatório PDF de Regressão", pdf_bytes, file_name="relatorio_regressao.pdf", mime="application/pdf", key="download_reg_pdf")
 
-                # --- Comparison Table for Regression Models ---
                 st.markdown("---")
                 st.markdown("### 📊 Comparação de Modelos de Regressão")
                 if st.session_state['reg_model_metrics']:
@@ -520,8 +531,16 @@ def show_machine_learning_page():
             st.markdown("### 📊 Configuração de Classificação")
             st.markdown("Configure os parâmetros do modelo de classificação. Use hiperparametrização (GridSearchCV) se desejar encontrar os melhores hiperparâmetros.")
 
-            target = st.selectbox("🎯 Variável alvo (target) para Classificação:", df.columns, key="clf_target")
-            features = st.multiselect("📌 Variáveis preditoras (features) para Classificação:", [col for col in df.columns if col != target], key="clf_features")
+            # For classification target, allow all column types (binary/categorical are handled by LabelEncoder)
+            clf_target_options = ["Selecione a variável alvo..."] + df.columns.tolist()
+            target = st.selectbox("🎯 Variável alvo (target) para Classificação:", clf_target_options, key="clf_target")
+
+            if target == "Selecione a variável alvo...":
+                target = None
+
+            # For classification features, allow all column types (numeric and categorical/binary)
+            clf_feature_options = [col for col in df.columns if col != target]
+            features = st.multiselect("📌 Variáveis preditoras (features) para Classificação:", clf_feature_options, key="clf_features")
 
             if not target or not features:
                 st.info("Selecione a variável alvo e pelo menos uma preditora para a classificação.")
@@ -530,15 +549,11 @@ def show_machine_learning_page():
             test_size = st.slider("🔀 Proporção de dados para teste", 0.1, 0.5, 0.2, 0.05, key="clf_test_size")
             random_state = st.number_input("Seed (random_state)", min_value=0, value=42, step=1, key="clf_random_state")
             enable_gridsearch = st.checkbox("🔍 Ativar GridSearchCV para hiperparametrização", key="clf_gridsearch")
-            
-            # --- New SHAP toggle ---
-            enable_shap = st.checkbox("⚙️ Ativar Explicabilidade com SHAP (pode ser computacionalmente intensivo)", value=False, key="clf_enable_shap")
-            # --- End New SHAP toggle ---
 
-            # Criando cópia do dataframe para evitar SettingWithCopyWarning e manipulação segura
+            enable_shap = st.checkbox("⚙️ Ativar Explicabilidade com SHAP (pode ser computacionalmente intensivo)", value=False, key="clf_enable_shap")
+
             df_model = df.copy()
 
-            # TRATAMENTO DE NaN NA VARIÁVEL ALVO (CLASSIFICAÇÃO)
             if df_model[target].isnull().any():
                 st.warning(f"A variável alvo '{target}' contém valores ausentes. Removendo linhas com NaNs na variável alvo.")
                 df_model.dropna(subset=[target], inplace=True)
@@ -558,7 +573,6 @@ def show_machine_learning_page():
             label_encoder_mapping = dict(zip(le.transform(original_target_values), original_target_values))
 
 
-            # Preprocessing Pipeline with Imputation
             numeric_features = X.select_dtypes(include=np.number).columns
             categorical_features = X.select_dtypes(include='object').columns
 
@@ -646,19 +660,17 @@ def show_machine_learning_page():
                     st.session_state['clf_best_params_found'] = best_params_found
                     st.session_state['clf_original_target_values'] = original_target_values
                     st.session_state['clf_label_encoder_mapping'] = label_encoder_mapping
-                    # st.session_state['clf_enable_shap'] = enable_shap # This is already set by the widget key
+                    # The value of enable_shap is already available from the checkbox widget via its key
+                    # st.session_state['clf_enable_shap'] = enable_shap # REMOVED: This line caused the error
 
-                    # Calculate and store metrics for the comparison table
                     y_pred = trained_model.predict(X_test)
                     current_accuracy = accuracy_score(y_test, y_pred)
                     current_precision = precision_score(y_test, y_pred, average='weighted', zero_division=0)
                     current_recall = recall_score(y_test, y_pred, average='weighted', zero_division=0)
                     current_f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
 
-                    # Use X e y originais (tratados de NaN) para validação cruzada
-                    # Re-obtenha X e y do df_model (que já teve o target tratado)
                     current_X_for_cv = df_model[features]
-                    current_y_for_cv = y # y já está codificado e sem NaNs aqui
+                    current_y_for_cv = y
                     cv_scores = cross_val_score(trained_model, current_X_for_cv, current_y_for_cv, cv=KFold(n_splits=5, shuffle=True, random_state=random_state), scoring='accuracy', n_jobs=-1)
                     current_mean_cv_score = np.mean(cv_scores)
 
@@ -671,7 +683,7 @@ def show_machine_learning_page():
                         'Media_CV_Acuracia': f"{current_mean_cv_score:.4f}",
                         'GridSearchCV_Ativado': enable_gridsearch,
                         'Melhores_Hiperparametros': str(best_params_found),
-                        'SHAP_Ativado': enable_shap
+                        'SHAP_Ativado': enable_shap # This correctly uses the value from the checkbox
                     }
                     st.session_state['clf_model_metrics'].append(model_metrics_entry)
 
@@ -689,7 +701,9 @@ def show_machine_learning_page():
                 best_params_found = st.session_state['clf_best_params_found']
                 original_target_values = st.session_state['clf_original_target_values']
                 label_encoder_mapping = st.session_state['clf_label_encoder_mapping']
-                current_enable_shap = st.session_state['clf_enable_shap'] # Retrieve SHAP toggle state
+                # Access the enable_shap state directly from the session_state managed by the widget
+                current_enable_shap = st.session_state.get('clf_enable_shap', False) # Safely get the value
+
 
                 y_pred = trained_model.predict(X_test)
 
@@ -701,7 +715,6 @@ def show_machine_learning_page():
 
                 cm = confusion_matrix(y_test, y_pred)
                 fig_cm, ax = plt.subplots(figsize=(6, 4))
-                # Use mapped labels if available for better readability
                 display_labels = [label_encoder_mapping[i] for i in sorted(label_encoder_mapping.keys())] if label_encoder_mapping else None
                 sns.heatmap(cm, annot=True, fmt='d', cmap="Blues", ax=ax, cbar=False,
                             xticklabels=display_labels, yticklabels=display_labels)
@@ -712,15 +725,13 @@ def show_machine_learning_page():
 
                 st.markdown("### 🔁 Validação Cruzada")
                 cv = KFold(n_splits=5, shuffle=True, random_state=random_state)
-                # Re-obtenha X e y do df_model (que já teve o target tratado)
                 current_X_for_cv = df_model[features]
-                current_y_for_cv = y # y já está codificado e sem NaNs aqui
+                current_y_for_cv = y
                 scores = cross_val_score(trained_model, current_X_for_cv, current_y_for_cv, cv=cv, scoring='accuracy', n_jobs=-1)
                 st.write("Scores de Validação Cruzada:", scores)
                 st.write("Média dos Scores de Validação Cruzada:", np.mean(scores))
                 st.write("Desvio Padrão dos Scores de Validação Cruzada:", np.std(scores))
 
-                # --- Conditionally generate SHAP plots ---
                 if current_enable_shap:
                     st.markdown("### 🧠 Explicabilidade com SHAP")
                     try:
@@ -747,49 +758,47 @@ def show_machine_learning_page():
                         X_test_df_shap = pd.DataFrame(X_test_preprocessed, columns=cleaned_feature_names)
                         model_for_shap = trained_model.named_steps['classifier']
 
-                        # Determine the class to explain for SHAP
                         num_classes_shap = len(original_target_values)
-                        class_to_explain_idx = 0 # Default for multi-class or single-class
+                        class_to_explain_idx = 0
 
                         if num_classes_shap == 2:
-                            class_to_explain_idx = 1 # For binary classification, explain the positive class (often encoded as 1)
+                            class_to_explain_idx = 1
                             st.info(f"Explicando os valores SHAP para a classe: '{label_encoder_mapping.get(class_to_explain_idx, class_to_explain_idx)}'.")
                         elif num_classes_shap > 2:
-                            # Allow user to select the class to explain for multi-class
                             class_options = {label_encoder_mapping[i]: i for i in sorted(label_encoder_mapping.keys())}
                             selected_class_name = st.selectbox(
                                 "Selecione a Classe para Explicação SHAP (Multi-classe):",
                                 options=list(class_options.keys()),
-                                index=0, # Default to the first class
+                                index=0,
                                 key="clf_shap_class_select"
                             )
                             class_to_explain_idx = class_options[selected_class_name]
                             st.info(f"Explicando os valores SHAP para a classe: '{selected_class_name}' (codificada como {class_to_explain_idx}).")
                         else:
                             st.warning("Não foi possível determinar as classes para explicação SHAP ou há apenas uma classe. A explicação SHAP pode não ser aplicável.")
-                            class_to_explain_idx = 0 # Fallback default
-                            
-                        shap_values = None # Initialize to None
+                            class_to_explain_idx = 0
+
+                        shap_values = None
 
                         if isinstance(model_for_shap, (RandomForestClassifier, XGBClassifier, LGBMClassifier)):
-                            explainer = shap.TreeExplainer(model_for_shap) 
+                            explainer = shap.TreeExplainer(model_for_shap)
                             shap_output = explainer(X_test_df_shap)
-                            if isinstance(shap_output, list): # Multi-class output (list of Explanation objects)
+                            if isinstance(shap_output, list):
                                 if len(shap_output) > class_to_explain_idx:
                                     shap_values = shap_output[class_to_explain_idx]
                                 else:
                                     st.error(f"Não foi possível explicar a classe {class_to_explain_idx} para o modelo de árvore. Verifique a seleção da classe.")
-                                    return 
-                            else: # Binary classification (single Explanation object)
+                                    return
+                            else:
                                 shap_values = shap_output
                         elif isinstance(model_for_shap, LogisticRegression):
                             background_data_for_linear = trained_model.named_steps['preprocessor'].transform(X_train)
                             if background_data_for_linear.shape[0] > 1000:
                                 background_data_for_linear = shap.utils.sample(background_data_for_linear, 1000, random_state=random_state)
-                            
+
                             explainer = shap.LinearExplainer(model_for_shap, background_data_for_linear)
                             shap_values_raw = explainer.shap_values(X_test_df_shap)
-                            if isinstance(shap_values_raw, list): # Multi-class output (list of arrays)
+                            if isinstance(shap_values_raw, list):
                                 if len(shap_values_raw) > class_to_explain_idx:
                                     shap_values = shap.Explanation(
                                         values=shap_values_raw[class_to_explain_idx],
@@ -800,28 +809,28 @@ def show_machine_learning_page():
                                 else:
                                     st.error(f"Não foi possível explicar a classe {class_to_explain_idx} para o modelo linear. Verifique a seleção da classe.")
                                     return
-                            else: # Binary classification (single array)
+                            else:
                                 shap_values = shap.Explanation(
                                     values=shap_values_raw,
                                     base_values=explainer.expected_value,
                                     data=X_test_df_shap.values,
                                     feature_names=X_test_df_shap.columns.tolist()
                                 )
-                        else: # KernelExplainer
+                        else:
                             st.warning("O modelo selecionado não é um modelo de árvore nem linear. Usando `KernelExplainer` do SHAP, que pode ser muito lento para grandes conjuntos de dados. **Recomenda-se reduzir o tamanho do conjunto de dados de teste** para explicabilidade SHAP para este modelo.")
                             X_test_df_shap_sampled = X_test_df_shap
-                            if X_test_df_shap.shape[0] > 100: 
-                                 X_test_df_shap_sampled = shap.utils.sample(X_test_df_shap, 100, random_state=random_state) 
+                            if X_test_df_shap.shape[0] > 100:
+                                 X_test_df_shap_sampled = shap.utils.sample(X_test_df_shap, 100, random_state=random_state)
                                  st.info(f"Amostrando {X_test_df_shap_sampled.shape[0]} observações para `KernelExplainer` para melhorar o desempenho.")
 
                             background_data = trained_model.named_steps['preprocessor'].transform(X_train)
-                            if background_data.shape[0] > 50: 
-                                background_data = shap.utils.sample(background_data, 50, random_state=random_state) 
-                            
+                            if background_data.shape[0] > 50:
+                                background_data = shap.utils.sample(background_data, 50, random_state=random_state)
+
                             explainer = shap.KernelExplainer(model_for_shap.predict_proba, background_data)
                             shap_values_raw = explainer.shap_values(X_test_df_shap_sampled)
-                            
-                            if isinstance(shap_values_raw, list): # Multi-class output (list of arrays)
+
+                            if isinstance(shap_values_raw, list):
                                 if len(shap_values_raw) > class_to_explain_idx:
                                     shap_values = shap.Explanation(
                                         values=shap_values_raw[class_to_explain_idx],
@@ -832,17 +841,17 @@ def show_machine_learning_page():
                                 else:
                                     st.error(f"Não foi possível explicar a classe {class_to_explain_idx} para o KernelExplainer. Verifique a seleção da classe.")
                                     return
-                            else: # Binary classification (single array)
+                            else:
                                 shap_values = shap.Explanation(
                                     values=shap_values_raw,
                                     base_values=explainer.expected_value,
                                     data=X_test_df_shap_sampled.values,
                                     feature_names=X_test_df_shap_sampled.columns.tolist()
                                 )
-                        
+
                         if not isinstance(shap_values, shap.Explanation):
                             st.error("Erro interno: `shap_values` não é um objeto `shap.Explanation` válido após a inicialização. Isso pode causar problemas de plotagem.")
-                            return # Exit SHAP section to prevent further errors
+                            return
                         else:
                             st.markdown("#### 🔍 Summary Plot (Importância Global das Features)")
                             fig_summary = plt.figure(figsize=(10, 6))
@@ -852,15 +861,12 @@ def show_machine_learning_page():
 
                             shap_var = st.selectbox("Escolha uma variável para Scatter Plot SHAP:", list(X_test_df_shap.columns), key="clf_shap_var")
                             feature_idx = list(X_test_df_shap.columns).index(shap_var)
-                            # shap_values is already a single Explanation object for the chosen class here
                             fig_scatter_shap = shap_scatter_plot(shap_values, feature_idx, list(X_test_df_shap.columns))
 
                             st.markdown("#### 🌊 Waterfall Plot (Explicabilidade para uma Observação Individual)")
                             obs_idx = st.slider("Selecione o índice da observação para Waterfall Plot", 0, len(X_test_df_shap) - 1, 0, key="clf_obs_idx")
                             fig_waterfall = plt.figure(figsize=(10, 6))
-                            
-                            # Create a single Explanation object for the chosen observation
-                            # Ensure base_values is scalar for waterfall plot
+
                             single_explanation_for_waterfall = shap.Explanation(
                                 values=shap_values.values[obs_idx],
                                 base_values=shap_values.base_values if np.isscalar(shap_values.base_values) else shap_values.base_values[obs_idx],
@@ -880,11 +886,11 @@ def show_machine_learning_page():
                         st.info("Isso pode ocorrer devido a incompatibilidades de versão do SHAP, modelos não totalmente suportados, ou problemas de desempenho com grandes volumes de dados. Por favor, tente um modelo diferente ou verifique a versão da biblioteca SHAP.")
                 else:
                     st.info("A geração de gráficos SHAP está desativada. Ative o checkbox 'Ativar Explicabilidade com SHAP' para visualizá-los.")
-                    # Clear SHAP figures from session state if not enabled in the current run (optional but good practice)
-                    if 'clf_fig_summary' in st.session_state: del st.session_state['clf_fig_summary']
-                    if 'clf_fig_waterfall' in st.session_state: del st.session_state['clf_fig_waterfall']
-                    if 'clf_fig_scatter_shap' in st.session_state: del st.session_state['clf_fig_scatter_shap']
-                # --- End Conditional SHAP plots ---
+                    # Clear SHAP related figures from session state if SHAP is disabled
+                    for k in ['clf_fig_summary', 'clf_fig_waterfall', 'clf_fig_scatter_shap']:
+                        if k in st.session_state:
+                            del st.session_state[k]
+
 
                 st.markdown("### 📥 Exportar Resultados e Relatório")
                 metrics = {
@@ -930,7 +936,7 @@ def show_machine_learning_page():
 
                     pdf.set_font("Arial", size=12, style='B')
                     pdf.cell(200, 10, txt="Gráficos de Avaliação:", ln=True)
-                    if fig_cm:
+                    if 'fig_cm' in locals() and fig_cm: # Check if fig_cm was created
                         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_file:
                             fig_cm.savefig(tmp_file.name)
                             pdf.image(tmp_file.name, x=10, w=180)
@@ -939,10 +945,9 @@ def show_machine_learning_page():
                         os.unlink(tmp_file.name)
                         pdf.ln(5)
 
-                    # --- Conditionally add SHAP plots to PDF ---
                     pdf.set_font("Arial", size=12, style='B')
                     pdf.cell(200, 10, txt="Gráficos de Explicabilidade (SHAP):", ln=True)
-                    if current_enable_shap: # Only attempt to add if SHAP was enabled
+                    if current_enable_shap:
                         pdf.set_font("Arial", size=12)
                         pdf.multi_cell(0, 7, txt="Os gráficos SHAP (Summary Plot, Scatter Plot e Waterfall Plot) fornecem insights sobre a importância das features e a contribuição individual de cada feature para as previsões do modelo. Eles estão disponíveis na interface da aplicação para exploração interativa. Gráficos SHAP podem não estar disponíveis em PDF se houve um erro na geração na interface.")
 
@@ -960,14 +965,12 @@ def show_machine_learning_page():
                     else:
                         pdf.set_font("Arial", size=12)
                         pdf.multi_cell(0, 7, txt="A geração de gráficos SHAP estava desativada para este modelo e, portanto, não foram incluídos neste relatório PDF.")
-                    # --- End Conditionally add SHAP plots to PDF ---
 
                     pdf.output("relatorio_classificacao.pdf")
                     with open("relatorio_classificacao.pdf", "rb") as f:
                         pdf_bytes = f.read()
                         st.download_button("📄 Baixar Relatório PDF de Classificação", pdf_bytes, file_name="relatorio_classificacao.pdf", mime="application/pdf", key="download_clf_pdf")
-                
-                # --- Comparison Table for Classification Models ---
+
                 st.markdown("---")
                 st.markdown("### 📊 Comparação de Modelos de Classificação")
                 if st.session_state['clf_model_metrics']:
@@ -978,6 +981,94 @@ def show_machine_learning_page():
 
 
     elif model_category_selection == "Modelos Não-Supervisionados":
-        with st.expander("⚙️ Configuração e Treinamento de Modelos Não-Supervisionados", expanded=True):
-            st.markdown("### 🛠️ Em Desenvolvimento")
-            st.info("Esta seção para Modelos Não-Supervisionados (ex: Clustering, Redução de Dimensionalidade) está em desenvolvimento. Por favor, aguarde futuras atualizações!")
+        with st.expander("⚙️ Clustering e Redução de Dimensionalidade", expanded=True):
+            st.markdown("### 🔍 Selecione as variáveis para análise não-supervisionada (apenas numéricas)")
+            # Filter for numeric columns for unsupervised analysis
+            num_cols = df.select_dtypes(include=np.number).columns.tolist()
+
+            # Add a placeholder to the multiselect options for "blank" default
+            selected_features_options = ["Selecione as variáveis..."] + num_cols
+            selected_features = st.multiselect("Variáveis numéricas:", selected_features_options, key="unsup_features")
+
+            # Remove the placeholder if it was inadvertently selected and no other features are picked
+            if "Selecione as variáveis..." in selected_features:
+                selected_features.remove("Selecione as variáveis...")
+
+            if len(selected_features) < 2:
+                st.info("Selecione ao menos duas variáveis numéricas para clustering ou visualização.")
+                # st.stop() # Removed st.stop() as it can cause issues with reruns in some Streamlit versions
+                return # Use return instead of st.stop()
+
+            df_unsup = df[selected_features].dropna().copy()
+
+            st.markdown("### 🧬 Escolha o método de agrupamento")
+            clustering_method = st.selectbox("Método de Clusterização", [
+                "K-Means", "DBSCAN", "Gaussian Mixture Model", "Hierárquico (Ward)"
+            ])
+            n_clusters = st.slider("Número de clusters (para K-Means/GMM/Hierárquico)", 2, 10, 3)
+            if clustering_method == "DBSCAN":
+                eps = st.slider("Parâmetro eps (raio máximo)", 0.1, 5.0, 1.0, step=0.1)
+                min_samples = st.slider("min_samples", 2, 10, 3)
+            run_clustering = st.button("Executar Agrupamento")
+            cluster_labels = None
+            model = None
+            if run_clustering:
+                from sklearn.preprocessing import StandardScaler
+                data_scaled = StandardScaler().fit_transform(df_unsup.values)
+                if clustering_method == "K-Means":
+                    model = KMeans(n_clusters=n_clusters, random_state=42, n_init='auto') # Added n_init='auto' to suppress warning
+                    cluster_labels = model.fit_predict(data_scaled)
+                elif clustering_method == "DBSCAN":
+                    model = DBSCAN(eps=eps, min_samples=min_samples)
+                    cluster_labels = model.fit_predict(data_scaled)
+                elif clustering_method == "Gaussian Mixture Model":
+                    model = GaussianMixture(n_components=n_clusters, random_state=42)
+                    cluster_labels = model.fit_predict(data_scaled)
+                elif clustering_method == "Hierárquico (Ward)":
+                    model = AgglomerativeClustering(n_clusters=n_clusters, linkage='ward')
+                    cluster_labels = model.fit_predict(data_scaled)
+                df_unsup['Cluster'] = cluster_labels
+                st.success("Clusterização realizada com sucesso!")
+                st.write("Tabela com clusters:")
+                st.dataframe(df_unsup.head(20))
+                from sklearn.decomposition import PCA
+                pca = PCA(n_components=2)
+                X_pca = pca.fit_transform(data_scaled)
+                pca_df = pd.DataFrame(X_pca, columns=['PC1', 'PC2'])
+                pca_df['Cluster'] = cluster_labels
+                fig = px.scatter(
+                    pca_df, x='PC1', y='PC2', color='Cluster',
+                    title='Visualização dos clusters em 2D (PCA)',
+                    opacity=0.8
+                )
+                st.plotly_chart(fig)
+                if clustering_method in ["K-Means", "Gaussian Mixture Model"]:
+                    st.markdown("#### Centroides médios dos clusters")
+                    centroids = model.cluster_centers_ if hasattr(model, 'cluster_centers_') else model.means_
+                    # Create a DataFrame for centroids for better display
+                    centroid_df = pd.DataFrame(centroids, columns=selected_features)
+                    st.dataframe(centroid_df)
+                csv = df_unsup.reset_index().to_csv(index=False).encode('utf-8')
+                st.download_button("Baixar resultados com clusters (CSV)", data=csv, file_name="clusters_result.csv", mime="text/csv")
+            st.markdown("### 🌐 Redução de Dimensionalidade")
+            red_method = st.selectbox("Método de Redução", ["PCA", "t-SNE"])
+            n_comp = st.slider("Nº de Componentes para Visualização", 2, 3, 2)
+            if st.button("Visualizar redução de dimensionalidade"):
+                from sklearn.preprocessing import StandardScaler
+                data_scaled = StandardScaler().fit_transform(df_unsup[selected_features])
+                if red_method == "PCA":
+                    from sklearn.decomposition import PCA
+                    reducer = PCA(n_components=n_comp)
+                else: # t-SNE
+                    from sklearn.manifold import TSNE
+                    reducer = TSNE(n_components=n_comp, random_state=42)
+                X_red = reducer.fit_transform(data_scaled)
+                red_df = pd.DataFrame(X_red, columns=[f"Comp_{i+1}" for i in range(n_comp)])
+                if cluster_labels is not None:
+                    red_df['Cluster'] = cluster_labels
+                    color = 'Cluster'
+                else:
+                    color = None
+                fig = px.scatter_matrix(red_df, dimensions=red_df.columns[:n_comp], color=color, title=f"{red_method} Scatter Matrix")
+                st.plotly_chart(fig)
+                st.dataframe(red_df.head())

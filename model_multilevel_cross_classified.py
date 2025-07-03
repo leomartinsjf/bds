@@ -1,6 +1,4 @@
 
-# model_multilevel_cross_classified.py
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -11,6 +9,17 @@ import plotly.graph_objects as go
 import io
 import zipfile
 import os
+
+
+def reset_multilevel_cross_state():
+    keys_to_reset = [
+        "cross_dep_var", "cross_indep_vars", "cross_use_l4",
+        "cross_group_1", "cross_group_2"
+    ]
+    for k in keys_to_reset:
+        if k in st.session_state:
+            del st.session_state[k]
+
 
 def show_multilevel_model_cross():
     st.subheader("🔀 Modelo Multinível Não Hierárquico (Cross-Classificado) — Versão Completa")
@@ -27,8 +36,12 @@ def show_multilevel_model_cross():
 
     st.markdown("### 🔎 Selecione as variáveis")
 
-    dep_var = st.selectbox("📌 Variável dependente", numeric_cols)
-    use_l4 = st.checkbox("🔷 Usar escores L4 como variáveis independentes", value=False)
+    if st.button("🔄 Limpar Seleções"):
+        reset_multilevel_cross_state()
+        st.rerun()
+
+    dep_var = st.selectbox("📌 Variável dependente", [""] + numeric_cols, key="cross_dep_var", index=0)
+    use_l4 = st.checkbox("🔷 Usar escores L4 como variáveis independentes", value=False, key="cross_use_l4")
 
     if use_l4:
         l4_vars = ["L4_Trocas", "L4_Subjetividades", "L4_Relacoes", "L4_Estrutura"]
@@ -38,12 +51,16 @@ def show_multilevel_model_cross():
             return
         st.info(f"Usando escores L4: {', '.join(indep_vars)}")
     else:
-        indep_vars = st.multiselect("📈 Variáveis independentes (nível 1)", numeric_cols)
+        indep_vars = st.multiselect("📈 Variáveis independentes (nível 1)", numeric_cols, key="cross_indep_vars")
 
-    group_1 = st.selectbox("🏫 Agrupamento 1 (ex: escola)", cat_cols)
-    group_2 = st.selectbox("🌍 Agrupamento 2 (ex: município)", cat_cols)
+    group_1 = st.selectbox("🏫 Agrupamento 1 (ex: escola)", [""] + cat_cols, key="cross_group_1", index=0)
+    group_2 = st.selectbox("🌍 Agrupamento 2 (ex: município)", [""] + cat_cols, key="cross_group_2", index=0)
 
     if st.button("📈 Rodar Modelo Multinível Não Hierárquico"):
+        if "" in [dep_var, group_1, group_2] or not indep_vars:
+            st.error("⚠️ Selecione todas as variáveis obrigatórias antes de rodar o modelo.")
+            return
+
         try:
             df_model = df[[dep_var] + indep_vars + [group_1, group_2]].dropna()
             df_model[group_1] = df_model[group_1].astype("category")
@@ -54,15 +71,16 @@ def show_multilevel_model_cross():
 
             md = smf.mixedlm(formula,
                              df_model,
-                             groups=df_model[group_1],  # arbitrário para estrutura principal
+                             groups=df_model[group_1],
                              re_formula="1",
                              vc_formula={group_2: f"0 + C({group_2})"})
 
             mdf = md.fit(reml=True)
             st.success("✅ Modelo ajustado com sucesso.")
+
+            st.markdown("### 📋 Sumário do Modelo")
             st.text(mdf.summary())
 
-            # Variâncias e ICCs
             var_g1 = mdf.cov_re.iloc[0, 0]
             var_g2 = mdf.vcomp[0] if hasattr(mdf, "vcomp") and len(mdf.vcomp) > 0 else 0
             var_res = mdf.scale
@@ -80,7 +98,6 @@ def show_multilevel_model_cross():
             st.write(f"**ICC {group_2}**: {icc_2:.4f}")
             st.write(f"**Erro intra-indivíduo**: {icc_res:.4f}")
 
-            # Visualização
             df_icc = pd.DataFrame({
                 "Componente": [group_1, group_2, "Residual"],
                 "Valor": [icc_1, icc_2, icc_res]
@@ -98,7 +115,6 @@ def show_multilevel_model_cross():
                 fig_pie.update_layout(title_text="Proporção da Variância Total")
                 st.plotly_chart(fig_pie, use_container_width=True)
 
-            # Relatório
             report = io.StringIO()
             report.write("# Relatório do Modelo Multinível Não Hierárquico\n\n")
             report.write(f"## Fórmula\n`{formula}`\n\n")
@@ -117,7 +133,6 @@ def show_multilevel_model_cross():
                                file_name="relatorio_cross_classificado.txt",
                                mime="text/plain")
 
-            # Exportar tudo em ZIP
             zip_path = "/tmp/modelo_cross_classificado.zip"
             with zipfile.ZipFile(zip_path, "w") as zipf:
                 with open("/tmp/summary_cross.txt", "w") as f:

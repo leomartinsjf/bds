@@ -1,11 +1,12 @@
-# model_multilevel_lvl3_full.py
-
+#correto 19/06
 import streamlit as st
 import pandas as pd
 import numpy as np
 import statsmodels.formula.api as smf
 import io
 from scipy import stats
+import plotly.express as px
+import plotly.graph_objects as go
 
 def show_multilevel_model_lvl3_full():
     st.subheader("📚 Modelo Multinível Nível 3 — Versão Completa")
@@ -29,18 +30,38 @@ def show_multilevel_model_lvl3_full():
 
     col1, col2 = st.columns(2)
     with col1:
-        dep_var = st.selectbox("📌 Variável dependente", numeric_cols, key="mlm_full_dep")
-        indep_vars = st.multiselect("📈 Variáveis independentes (nível 1)", numeric_cols, key="mlm_full_indep")
+        dep_var = st.selectbox("📌 Variável dependente", ["Selecione..."] + numeric_cols, index=0, key="mlm_full_dep")
+        group_lvl2 = st.selectbox("🏫 Agrupamento Nível 2 (ex: escola)", ["Selecione..."] + cat_cols, index=0, key="mlm_full_lvl2")
     with col2:
-        group_lvl2 = st.selectbox("🏫 Agrupamento Nível 2 (ex: escola)", cat_cols, key="mlm_full_lvl2")
-        group_lvl3 = st.selectbox("🌍 Agrupamento Nível 3 (ex: município)", cat_cols, key="mlm_full_lvl3")
+        group_lvl3 = st.selectbox("🌍 Agrupamento Nível 3 (ex: município)", ["Selecione..."] + cat_cols, index=0, key="mlm_full_lvl3")
+
+    # Fonte das variáveis independentes — controlada para não duplicar blocos
+    st.markdown("### 🎯 Fontes das Variáveis Independentes")
+    fonte_vi = st.radio("Escolha a fonte das variáveis independentes:",
+                        ("Selecione...", "Escores L4", "Selecionar manualmente"), index=0, key="mlm_fonte_vi")
+
+    l4_vars = ["L4_Trocas", "L4_Subjetividades", "L4_Relacoes", "L4_Estrutura"]
+    l4_present = [var for var in l4_vars if var in df.columns]
+
+    indep_vars = []
+    if fonte_vi == "Escores L4":
+        if len(l4_present) < 4:
+            st.error("⚠️ Nem todos os escores L4 estão disponíveis. Calcule-os primeiro na aba 'Modelo L4'.")
+            return
+        indep_vars = l4_present
+        st.info(f"Incluindo escores: {', '.join(l4_present)}")
+    elif fonte_vi == "Selecionar manualmente":
+        indep_vars = st.multiselect("📈 Variáveis independentes (nível 1)", numeric_cols, key="mlm_full_vi_manual")
+    elif fonte_vi == "Selecione...":
+        st.warning("Por favor, selecione a fonte das variáveis independentes.")
+        return
 
     # Armazenar seleções para uso nos blocos seguintes
     st.session_state["mlm3_config"] = {
-        "dep_var": dep_var,
+        "dep_var": dep_var if dep_var != "Selecione..." else "",
         "indep_vars": indep_vars,
-        "group_lvl2": group_lvl2,
-        "group_lvl3": group_lvl3,
+        "group_lvl2": group_lvl2 if group_lvl2 != "Selecione..." else "",
+        "group_lvl3": group_lvl3 if group_lvl3 != "Selecione..." else "",
         "df_model": df
     }
 
@@ -56,6 +77,10 @@ def show_multilevel_model_lvl3_full():
 
         if not dep_var or not indep_vars or not group_lvl2 or not group_lvl3:
             st.warning("⚠️ Selecione todas as variáveis para continuar.")
+            return
+
+        if group_lvl2 == group_lvl3:
+            st.error("⚠️ As variáveis de agrupamento de nível 2 e nível 3 devem ser diferentes.")
             return
 
         try:
@@ -99,7 +124,6 @@ def show_multilevel_model_lvl3_full():
             st.write(f"**ICC Nível 2**: `{icc_2:.4f}`")
             st.write(f"**Erro intra-indivíduo**: `{icc_resid:.4f}`")
 
-            # Armazenar modelo e métricas
             st.session_state["mlm3_model"] = mdf3
             st.session_state["mlm3_variancias"] = {
                 "var_3": var_lvl3, "var_2": var_lvl2, "var_res": var_resid,
@@ -118,14 +142,20 @@ def show_multilevel_model_lvl3_full():
             "Valor": [var_data["icc_3"], var_data["icc_2"], var_data["icc_res"]]
         })
 
+        icc_colors = {
+            "Nível 3": "#636EFA",
+            "Nível 2": "#EF553B",
+            "Residual": "#00CC96"
+        }
+
         col1, col2 = st.columns(2)
 
         with col1:
             st.markdown("#### 📉 Gráfico de Barras")
-            import plotly.express as px
             fig_bar = px.bar(
                 df_icc, x="Componente", y="Valor", text="Valor",
-                color="Componente", title="Distribuição das Variâncias (ICC)"
+                color="Componente", title="Distribuição das Variâncias (ICC)",
+                color_discrete_map=icc_colors
             )
             fig_bar.update_traces(texttemplate='%{text:.2%}', textposition='outside')
             fig_bar.update_layout(yaxis_tickformat=".0%", uniformtext_minsize=8, uniformtext_mode='hide')
@@ -133,12 +163,12 @@ def show_multilevel_model_lvl3_full():
 
         with col2:
             st.markdown("#### 🥧 Gráfico de Pizza")
-            import plotly.graph_objects as go
             fig_pie = go.Figure(data=[go.Pie(
                 labels=df_icc["Componente"],
                 values=df_icc["Valor"],
                 textinfo='label+percent',
-                hole=.3
+                hole=.3,
+                marker=dict(colors=[icc_colors[c] for c in df_icc["Componente"]])
             )])
             fig_pie.update_layout(title_text="Proporção da Variância Total por Nível")
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -223,18 +253,6 @@ def show_multilevel_model_lvl3_full():
                            mime="text/plain")
 
 
-    use_l4 = st.checkbox("🔷 Usar escores L4 como variáveis independentes", value=False)
-
-    if use_l4:
-        l4_vars = ["L4_Trocas", "L4_Subjetividades", "L4_Relacoes", "L4_Estrutura"]
-        l4_present = [var for var in l4_vars if var in df.columns]
-        if len(l4_present) < 4:
-            st.error("⚠️ Nem todos os escores L4 estão disponíveis. Calcule-os primeiro na aba 'Modelo L4'.")
-            return
-        indep_vars = l4_present
-        st.info(f"Usando variáveis: {', '.join(l4_present)}")
-    else:
-        indep_vars = st.multiselect("📈 Variáveis independentes (nível 1)", numeric_cols, key="mlm_full_indep2")
 
 
     st.markdown("### 📦 Exportação Completa")

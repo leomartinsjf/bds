@@ -4,6 +4,17 @@ import numpy as np
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime # Importar datetime para timestamps
+# --- Logging de Feature Engineering ---
+def init_feature_engineering_log() -> None:
+    """Inicializa histórico de operações de engenharia de variáveis."""
+    st.session_state.setdefault("feature_engineering_logs", [])
+
+def log_feature_engineering_step(step: str) -> None:
+    """Adiciona uma entrada ao histórico com timestamp."""
+    init_feature_engineering_log()
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["feature_engineering_logs"].append(f"[{ts}] {step}")
+
 
 def col_exists(df, col_name):
     return col_name in df.columns
@@ -11,8 +22,12 @@ def col_exists(df, col_name):
 def show_col_preview(df, col_names):
     if isinstance(col_names, str):
         col_names = [col_names]
+    existing = [c for c in col_names if c in df.columns]
+    if not existing:
+        st.info("Nenhuma das colunas solicitadas está presente.")
+        return
     st.write("Prévia das novas colunas:")
-    st.dataframe(df[col_names].head())
+    st.dataframe(df[existing].head())
 
 def apply_op(series, op, val):
     if op == "==":
@@ -43,7 +58,9 @@ def convert_val(dtype, val):
     else:
         return val
 
-def show_feature_engineering():
+def show_feature_engineering() -> bool:
+    init_feature_engineering_log()
+    df_current = st.session_state.get('df_processed').copy()
     if st.session_state['df_processed'] is None or st.session_state['df_processed'].empty:
         st.warning("⚠️ Dados não carregados ou pré-processados. Por favor, complete as etapas anteriores.")
         return False
@@ -55,27 +72,27 @@ def show_feature_engineering():
     if 'feature_engineering_logs' not in st.session_state:
         st.session_state['feature_engineering_logs'] = []
 
-    df_current_session_copy = st.session_state['df_processed'].copy()
+    df_current = st.session_state['df_processed'].copy()
     st.markdown("---")
 
     st.info("Esta seção permite transformar, modificar, incluir, excluir e renomear as variáveis do dataframe.")
 
     # PAINEL DE REMOÇÃO DE MÚLTIPLAS COLUNAS
     with st.expander("🧹 Remover múltiplas colunas"):
-        if len(df_current_session_copy.columns) > 0:
+        if len(df_current.columns) > 0:
             cols_to_remove = st.multiselect(
                 "Selecione as colunas a remover",
-                options=df_current_session_copy.columns.tolist(),
+                options=df_current.columns.tolist(),
                 key="fe_remove_multiselect"
             )
             if cols_to_remove:
                 if st.button("Remover selecionadas", key="fe_remove_cols_button"):
-                    df_current_session_copy.drop(columns=cols_to_remove, inplace=True)
-                    st.session_state['df_processed'] = df_current_session_copy
+                    df_current.drop(columns=cols_to_remove, inplace=True)
+                    st.session_state['df_processed'] = df_current
                     log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Colunas removidas: {', '.join(cols_to_remove)}."
-                    st.session_state['feature_engineering_logs'].append(log_message)
+                    log_feature_engineering_step(log_message)
                     st.success(f"Colunas removidas: {', '.join(cols_to_remove)}")
-                    st.dataframe(df_current_session_copy.head())
+                    st.dataframe(df_current.head())
                     st.rerun()
         else:
             st.info("O DataFrame não possui colunas para remoção.")
@@ -83,10 +100,10 @@ def show_feature_engineering():
     st.markdown("---")
 
     # Atualiza listas após remoção
-    df_current_session_copy = st.session_state['df_processed'].copy()
-    num_cols = df_current_session_copy.select_dtypes(include=np.number).columns.tolist()
-    cat_cols = df_current_session_copy.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
-    date_cols = df_current_session_copy.select_dtypes(include=['datetime64', 'datetime64[ns]']).columns.tolist()
+    df_current = st.session_state['df_processed'].copy()
+    num_cols = df_current.select_dtypes(include=np.number).columns.tolist()
+    cat_cols = df_current.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
+    date_cols = df_current.select_dtypes(include=['datetime64', 'datetime64[ns]']).columns.tolist()
     all_cols = num_cols + cat_cols + date_cols
 
     key_prefix = "fe_"
@@ -100,19 +117,19 @@ def show_feature_engineering():
         if st.button("Criar variável combinada", key=key_prefix + "create_combo_button"):
             if not selected_combine or not new_var_name_combine:
                 st.warning("Selecione variáveis e forneça um nome.")
-            elif col_exists(df_current_session_copy, new_var_name_combine):
+            elif col_exists(df_current, new_var_name_combine):
                 st.error(f"O nome '{new_var_name_combine}' já existe.")
             else:
                 try:
                     if operation == "Soma":
-                        df_current_session_copy[new_var_name_combine] = df_current_session_copy[selected_combine].sum(axis=1)
+                        df_current[new_var_name_combine] = df_current[selected_combine].sum(axis=1)
                     else:
-                        df_current_session_copy[new_var_name_combine] = df_current_session_copy[selected_combine].mean(axis=1)
-                    st.session_state.df_processed = df_current_session_copy
+                        df_current[new_var_name_combine] = df_current[selected_combine].mean(axis=1)
+                    st.session_state.df_processed = df_current
                     log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_var_name_combine}' criada pela combinação de {', '.join(selected_combine)} usando '{operation}'."
-                    st.session_state['feature_engineering_logs'].append(log_message)
+                    log_feature_engineering_step(log_message)
                     st.success(f"Variável '{new_var_name_combine}' criada.")
-                    show_col_preview(df_current_session_copy, new_var_name_combine)
+                    show_col_preview(df_current, new_var_name_combine)
                     feature_engineered_flag = True
                     st.rerun()
                 except Exception as e:
@@ -142,21 +159,21 @@ def show_feature_engineering():
                 if st.button("Criar dummies", key=key_prefix + "createdummies_button"):
                     try:
                         dummies = pd.get_dummies(
-                            df_current_session_copy[selected_cat_dummy],
+                            df_current[selected_cat_dummy],
                             prefix=selected_cat_dummy,
                             drop_first=drop_first_dummy,
                             dtype=int
                         )
-                        existing_dummy_cols = [col for col in dummies.columns if col_exists(df_current_session_copy, col)]
+                        existing_dummy_cols = [col for col in dummies.columns if col_exists(df_current, col)]
                         if existing_dummy_cols:
                             st.error(f"Colunas dummy já existem: {', '.join(existing_dummy_cols)}.")
                         else:
-                            df_current_session_copy = pd.concat([df_current_session_copy, dummies], axis=1)
-                            st.session_state["df_processed"] = df_current_session_copy
+                            df_current = pd.concat([df_current, dummies], axis=1)
+                            st.session_state["df_processed"] = df_current
                             log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Dummies criadas para a variável '{selected_cat_dummy}'. Nova(s) coluna(s): {', '.join(dummies.columns.tolist())}."
-                            st.session_state['feature_engineering_logs'].append(log_message)
+                            log_feature_engineering_step(log_message)
                             st.success(f"Dummies para '{selected_cat_dummy}' criadas.")
-                            show_col_preview(df_current_session_copy, dummies.columns.tolist())
+                            show_col_preview(df_current, dummies.columns.tolist())
                             feature_engineered_flag = True
                             st.rerun()
                     except Exception as e:
@@ -179,27 +196,27 @@ def show_feature_engineering():
 
             if bin_var == "":
                 st.info("Selecione uma variável.")
-            elif bin_var in df_current_session_copy.columns:
-                unique_vals = df_current_session_copy[bin_var].dropna().unique().tolist()
+            elif bin_var in df_current.columns:
+                unique_vals = df_current[bin_var].dropna().unique().tolist()
                 if len(unique_vals) > 0:
                     op = st.selectbox("Operação de comparação", ["==", "!=", ">", ">=", "<", "<="], key=key_prefix + "bin_op")
                     val_pos = st.selectbox("Valor para comparação", unique_vals, key=key_prefix + "binpos_select")
                     bin_name_create = st.text_input("Nome da nova variável binária", key=key_prefix + "binnamebc_input")
                     if st.button("Criar variável binária", key=key_prefix + "create_bin_button"):
                         if bin_name_create:
-                            if col_exists(df_current_session_copy, bin_name_create):
+                            if col_exists(df_current, bin_name_create):
                                 st.error(f"O nome '{bin_name_create}' já existe.")
                             else:
                                 try:
-                                    col_data = df_current_session_copy[bin_var]
+                                    col_data = df_current[bin_var]
                                     val_compare = convert_val(col_data.dtype, val_pos)
                                     mask = apply_op(col_data, op, val_compare)
-                                    df_current_session_copy[bin_name_create] = mask.astype(int)
-                                    st.session_state["df_processed"] = df_current_session_copy
+                                    df_current[bin_name_create] = mask.astype(int)
+                                    st.session_state["df_processed"] = df_current
                                     log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável binária '{bin_name_create}' criada a partir de '{bin_var}' com condição '{op} {val_pos}'."
-                                    st.session_state['feature_engineering_logs'].append(log_message)
+                                    log_feature_engineering_step(log_message)
                                     st.success(f"Variável '{bin_name_create}' criada.")
-                                    show_col_preview(df_current_session_copy, bin_name_create)
+                                    show_col_preview(df_current, bin_name_create)
                                     feature_engineered_flag = True
                                     st.rerun()
                                 except Exception as e:
@@ -235,19 +252,19 @@ def show_feature_engineering():
 
                 if st.button("Criar variável filtrada (única)", key=key_prefix + "create_filtered_single_button"):
                     if filter_col and filter_value_single and new_filtered_name_single:
-                        if col_exists(df_current_session_copy, new_filtered_name_single):
+                        if col_exists(df_current, new_filtered_name_single):
                             st.error(f"O nome '{new_filtered_name_single}' já existe.")
                         else:
                             try:
-                                col_data = df_current_session_copy[filter_col]
+                                col_data = df_current[filter_col]
                                 val_compare = convert_val(col_data.dtype, filter_value_single)
                                 mask = apply_op(col_data, op, val_compare)
-                                df_current_session_copy[new_filtered_name_single] = np.where(mask, col_data, np.nan)
-                                st.session_state["df_processed"] = df_current_session_copy
+                                df_current[new_filtered_name_single] = np.where(mask, col_data, np.nan)
+                                st.session_state["df_processed"] = df_current
                                 log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_filtered_name_single}' criada por filtragem de '{filter_col}' com condição '{op} {val_compare}'."
-                                st.session_state['feature_engineering_logs'].append(log_message)
+                                log_feature_engineering_step(log_message)
                                 st.success(f"Variável '{new_filtered_name_single}' criada com base em {filter_col} {op} {val_compare}.")
-                                show_col_preview(df_current_session_copy, new_filtered_name_single)
+                                show_col_preview(df_current, new_filtered_name_single)
                                 feature_engineered_flag = True
                                 st.rerun()
                             except Exception as e:
@@ -313,31 +330,31 @@ def show_feature_engineering():
                         st.warning("Se a segunda condição estiver marcada, selecione a coluna e o valor para ela.")
                     elif add_cond3_multi and (not col_cond3_multi or value_cond3_multi == ""):
                         st.warning("Se a terceira condição estiver marcada, selecione a coluna e o valor para ela.")
-                    elif col_exists(df_current_session_copy, new_filtered_name_multi_level):
+                    elif col_exists(df_current, new_filtered_name_multi_level):
                         st.error(f"O nome '{new_filtered_name_multi_level}' já existe.")
                     else:
                         try:
-                            v1 = convert_val(df_current_session_copy[col_cond1_multi].dtype, value_cond1_multi)
-                            final_condition = apply_op(df_current_session_copy[col_cond1_multi], op_cond1, v1)
+                            v1 = convert_val(df_current[col_cond1_multi].dtype, value_cond1_multi)
+                            final_condition = apply_op(df_current[col_cond1_multi], op_cond1, v1)
                             condition_description = f"'{col_cond1_multi}' {op_cond1} '{value_cond1_multi}'"
                             if add_cond2_multi:
-                                v2 = convert_val(df_current_session_copy[col_cond2_multi].dtype, value_cond2_multi)
-                                final_condition = final_condition & apply_op(df_current_session_copy[col_cond2_multi], op_cond2, v2)
+                                v2 = convert_val(df_current[col_cond2_multi].dtype, value_cond2_multi)
+                                final_condition = final_condition & apply_op(df_current[col_cond2_multi], op_cond2, v2)
                                 condition_description += f" AND '{col_cond2_multi}' {op_cond2} '{value_cond2_multi}'"
                             if add_cond3_multi:
-                                v3 = convert_val(df_current_session_copy[col_cond3_multi].dtype, value_cond3_multi)
-                                final_condition = final_condition & apply_op(df_current_session_copy[col_cond3_multi], op_cond3, v3)
+                                v3 = convert_val(df_current[col_cond3_multi].dtype, value_cond3_multi)
+                                final_condition = final_condition & apply_op(df_current[col_cond3_multi], op_cond3, v3)
                                 condition_description += f" AND '{col_cond3_multi}' {op_cond3} '{value_cond3_multi}'"
-                            df_current_session_copy[new_filtered_name_multi_level] = np.where(
+                            df_current[new_filtered_name_multi_level] = np.where(
                                 final_condition,
-                                df_current_session_copy[col_ref_cond_multi],
+                                df_current[col_ref_cond_multi],
                                 np.nan
                             )
-                            st.session_state["df_processed"] = df_current_session_copy
+                            st.session_state["df_processed"] = df_current
                             log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{new_filtered_name_multi_level}' criada por filtragem de '{col_ref_cond_multi}' com múltiplas condições: {condition_description}."
-                            st.session_state['feature_engineering_logs'].append(log_message)
+                            log_feature_engineering_step(log_message)
                             st.success(f"Variável '{new_filtered_name_multi_level}' criada com base em múltiplas condições.")
-                            show_col_preview(df_current_session_copy, new_filtered_name_multi_level)
+                            show_col_preview(df_current, new_filtered_name_multi_level)
                             feature_engineered_flag = True
                             st.rerun()
                         except Exception as e:
@@ -364,29 +381,29 @@ def show_feature_engineering():
                 if st.button("Aplicar transformação", key=key_prefix + "applytransform_button"):
                     try:
                         new_math_col_name = f"{math_var}_{transform_type.lower().replace(' ', '_')}"
-                        if col_exists(df_current_session_copy, new_math_col_name):
+                        if col_exists(df_current, new_math_col_name):
                             st.error(f"O nome '{new_math_col_name}' já existe.")
                         else:
                             if transform_type == "Log":
-                                if (df_current_session_copy[math_var] < 0).any():
+                                if (df_current[math_var] < 0).any():
                                     st.error("Log requer valores não-negativos.")
                                 else:
-                                    df_current_session_copy[new_math_col_name] = np.log1p(df_current_session_copy[math_var].clip(lower=0))
+                                    df_current[new_math_col_name] = np.log1p(df_current[math_var].clip(lower=0))
                             elif transform_type == "Quadrado":
-                                df_current_session_copy[new_math_col_name] = df_current_session_copy[math_var] ** 2
+                                df_current[new_math_col_name] = df_current[math_var] ** 2
                             elif transform_type == "Raiz quadrada":
-                                if (df_current_session_copy[math_var] < 0).any():
+                                if (df_current[math_var] < 0).any():
                                     st.error("Raiz quadrada requer valores não-negativos.")
                                 else:
-                                    df_current_session_copy[new_math_col_name] = np.sqrt(df_current_session_copy[math_var].clip(lower=0))
+                                    df_current[new_math_col_name] = np.sqrt(df_current[math_var].clip(lower=0))
                             elif transform_type == "Z-score":
-                                std = df_current_session_copy[math_var].std()
-                                df_current_session_copy[new_math_col_name] = 0 if std == 0 else (df_current_session_copy[math_var] - df_current_session_copy[math_var].mean()) / std
-                            st.session_state["df_processed"] = df_current_session_copy
+                                std = df_current[math_var].std()
+                                df_current[new_math_col_name] = 0 if std == 0 else (df_current[math_var] - df_current[math_var].mean()) / std
+                            st.session_state["df_processed"] = df_current
                             log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Transformação '{transform_type}' aplicada na variável '{math_var}'. Nova coluna: '{new_math_col_name}'."
-                            st.session_state['feature_engineering_logs'].append(log_message)
+                            log_feature_engineering_step(log_message)
                             st.success(f"Transformação '{transform_type}' aplicada. Nova coluna: '{new_math_col_name}'.")
-                            show_col_preview(df_current_session_copy, new_math_col_name)
+                            show_col_preview(df_current, new_math_col_name)
                             feature_engineered_flag = True
                             st.rerun()
                     except Exception as e:
@@ -413,16 +430,16 @@ def show_feature_engineering():
                 max_val = st.number_input("Valor máximo da escala Likert", min_value=1, value=5, key=key_prefix + "likertmax_input")
                 new_name_likert = st.text_input("Nome da variável invertida", value=f"{likert_var}_inv", key=key_prefix + "likertname_input")
                 if st.button("Inverter variável Likert", key=key_prefix + "invertlikert_button"):
-                    if col_exists(df_current_session_copy, new_name_likert):
+                    if col_exists(df_current, new_name_likert):
                         st.error(f"O nome '{new_name_likert}' já existe.")
                     else:
                         try:
-                            df_current_session_copy[new_name_likert] = max_val + 1 - df_current_session_copy[likert_var]
-                            st.session_state["df_processed"] = df_current_session_copy
+                            df_current[new_name_likert] = max_val + 1 - df_current[likert_var]
+                            st.session_state["df_processed"] = df_current
                             log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Escala da variável Likert '{likert_var}' invertida para '{new_name_likert}' (Max Val: {max_val})."
-                            st.session_state['feature_engineering_logs'].append(log_message)
+                            log_feature_engineering_step(log_message)
                             st.success(f"Variável '{new_name_likert}' criada.")
-                            show_col_preview(df_current_session_copy, new_name_likert)
+                            show_col_preview(df_current, new_name_likert)
                             feature_engineered_flag = True
                             st.rerun()
                         except Exception as e:
@@ -439,16 +456,16 @@ def show_feature_engineering():
         if st.button("Criar interação", key=key_prefix + "create_interaction_button"):
             if len(interaction_vars) == 2:
                 new_interaction_name = f"{interaction_vars[0]}_x_{interaction_vars[1]}"
-                if col_exists(df_current_session_copy, new_interaction_name):
+                if col_exists(df_current, new_interaction_name):
                     st.error(f"A coluna '{new_interaction_name}' já existe.")
                 else:
                     try:
-                        df_current_session_copy[new_interaction_name] = df_current_session_copy[interaction_vars[0]] * df_current_session_copy[interaction_vars[1]]
-                        st.session_state["df_processed"] = df_current_session_copy
+                        df_current[new_interaction_name] = df_current[interaction_vars[0]] * df_current[interaction_vars[1]]
+                        st.session_state["df_processed"] = df_current
                         log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Interação criada entre '{interaction_vars[0]}' e '{interaction_vars[1]}'. Nova coluna: '{new_interaction_name}'."
-                        st.session_state['feature_engineering_logs'].append(log_message)
+                        log_feature_engineering_step(log_message)
                         st.success(f"Interação '{new_interaction_name}' criada.")
-                        show_col_preview(df_current_session_copy, new_interaction_name)
+                        show_col_preview(df_current, new_interaction_name)
                         feature_engineered_flag = True
                         st.rerun()
                     except Exception as e:
@@ -475,19 +492,19 @@ def show_feature_engineering():
                 new_bin_name_qcut = st.text_input("Nome da variável discretizada", value=f"{var_to_bin_qcut}_binned_qcut", key=key_prefix + "binnamed_qcut_input")
 
                 if st.button("Discretizar variável (Quantis)", key=key_prefix + "apply_discretize_qcut_button"):
-                    if col_exists(df_current_session_copy, new_bin_name_qcut):
+                    if col_exists(df_current, new_bin_name_qcut):
                         st.error(f"O nome '{new_bin_name_qcut}' já existe.")
                     else:
                         try:
-                            temp_series_no_nan = df_current_session_copy[var_to_bin_qcut].dropna()
+                            temp_series_no_nan = df_current[var_to_bin_qcut].dropna()
                             if not temp_series_no_nan.empty:
                                 binned_data = pd.qcut(temp_series_no_nan, q=int(bins_qcut), duplicates='drop')
-                                df_current_session_copy.loc[binned_data.index, new_bin_name_qcut] = binned_data
-                                st.session_state["df_processed"] = df_current_session_copy
+                                df_current.loc[binned_data.index, new_bin_name_qcut] = binned_data
+                                st.session_state["df_processed"] = df_current
                                 log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Variável '{var_to_bin_qcut}' discretizada em {int(bins_qcut)} quantis. Nova coluna: '{new_bin_name_qcut}'."
-                                st.session_state['feature_engineering_logs'].append(log_message)
+                                log_feature_engineering_step(log_message)
                                 st.success(f"Variável '{new_bin_name_qcut}' criada por quantis.")
-                                show_col_preview(df_current_session_copy, new_bin_name_qcut)
+                                show_col_preview(df_current, new_bin_name_qcut)
                                 feature_engineered_flag = True
                                 st.rerun()
                             else:
@@ -522,7 +539,7 @@ def show_feature_engineering():
                     st.warning("O número de componentes não pode ser maior que o número de variáveis selecionadas.")
                 else:
                     try:
-                        df_pca_input = df_current_session_copy[pca_vars].dropna()
+                        df_pca_input = df_current[pca_vars].dropna()
                         if df_pca_input.empty:
                             st.error("Não há dados completos (sem NaNs) nas colunas selecionadas para PCA. Por favor, trate os valores ausentes primeiro.")
                         else:
@@ -533,7 +550,7 @@ def show_feature_engineering():
                             existing_pca_comp_cols = []
                             for i in range(n_components_pca):
                                 comp_name = f"{pca_var_name_base}_comp{i+1}"
-                                if col_exists(df_current_session_copy, comp_name):
+                                if col_exists(df_current, comp_name):
                                     existing_pca_comp_cols.append(comp_name)
                             if existing_pca_comp_cols:
                                 st.error(f"Algumas colunas de componentes PCA já existem: {', '.join(existing_pca_comp_cols)}.")
@@ -541,15 +558,15 @@ def show_feature_engineering():
                                 created_cols = []
                                 for i in range(n_components_pca):
                                     comp_name = f"{pca_var_name_base}_comp{i+1}"
-                                    df_current_session_copy.loc[df_pca_input.index, comp_name] = components[:, i]
+                                    df_current.loc[df_pca_input.index, comp_name] = components[:, i]
                                     created_cols.append(comp_name)
-                                st.session_state["df_processed"] = df_current_session_copy
+                                st.session_state["df_processed"] = df_current
                                 log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] PCA aplicado nas variáveis {', '.join(pca_vars)}. Criado(s) {n_components_pca} componente(s): {', '.join(created_cols)}."
-                                st.session_state['feature_engineering_logs'].append(log_message)
+                                log_feature_engineering_step(log_message)
                                 st.success(f"PCA aplicado e {n_components_pca} componentes criados.")
                                 st.write(f"Variância Explicada por Componente: {pca.explained_variance_ratio_}")
                                 st.write(f"Variância Total Explicada: {pca.explained_variance_ratio_.sum():.2f}")
-                                show_col_preview(df_current_session_copy, created_cols)
+                                show_col_preview(df_current, created_cols)
                                 feature_engineered_flag = True
                                 st.rerun()
                     except Exception as e:
@@ -565,8 +582,8 @@ def show_feature_engineering():
         st.info("Permite converter colunas numéricas (incluindo binárias 0/1) e categóricas com poucos valores únicos em novas colunas categóricas com nomes personalizados para cada valor.")
 
         candidate_cols_for_naming = []
-        for col in df_current_session_copy.columns:
-            col_series = df_current_session_copy[col].dropna()
+        for col in df_current.columns:
+            col_series = df_current[col].dropna()
             nunique = col_series.nunique()
 
             if pd.api.types.is_numeric_dtype(col_series):
@@ -591,15 +608,15 @@ def show_feature_engineering():
             if selected_col_for_naming == "":
                 st.info("Selecione uma variável.")
             else:
-                st.write(f"Valores únicos na coluna '{selected_col_for_naming}': {df_current_session_copy[selected_col_for_naming].dropna().unique().tolist()}")
-                unique_values_to_map = df_current_session_copy[selected_col_for_naming].dropna().unique().tolist()
+                st.write(f"Valores únicos na coluna '{selected_col_for_naming}': {df_current[selected_col_for_naming].dropna().unique().tolist()}")
+                unique_values_to_map = df_current[selected_col_for_naming].dropna().unique().tolist()
                 unique_values_to_map.sort()
 
                 st.markdown("#### Mapeamento de Valores para Nova Categoria")
                 mapping = {}
                 new_col_name_for_cat = st.text_input("Nome da Nova Coluna Categórica:", value=f"{selected_col_for_naming}_cat", key=key_prefix + "new_categorical_col_name_input")
 
-                if new_col_name_for_cat and col_exists(df_current_session_copy, new_col_name_for_cat):
+                if new_col_name_for_cat and col_exists(df_current, new_col_name_for_cat):
                     st.warning(f"O nome '{new_col_name_for_cat}' já existe.")
 
                 cols_map = st.columns(2)
@@ -615,26 +632,26 @@ def show_feature_engineering():
                 if st.button("Aplicar Transformação Categórica", key=key_prefix + "apply_categorical_transform_button"):
                     if not new_col_name_for_cat:
                         st.error("Por favor, forneça um nome para a nova coluna categórica.")
-                    elif col_exists(df_current_session_copy, new_col_name_for_cat):
+                    elif col_exists(df_current, new_col_name_for_cat):
                         st.error(f"O nome '{new_col_name_for_cat}' já existe.")
                     elif len(mapping) != len(unique_values_to_map) or any(not v for v in mapping.values()):
                         st.error("Forneça um nome categórico para *todos* os valores únicos da coluna selecionada.")
                     else:
                         try:
-                            df_current_session_copy[new_col_name_for_cat] = df_current_session_copy[selected_col_for_naming].map(mapping).astype('category')
-                            st.session_state.df_processed = df_current_session_copy
+                            df_current[new_col_name_for_cat] = df_current[selected_col_for_naming].map(mapping).astype('category')
+                            st.session_state.df_processed = df_current
 
                             log_message = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Coluna '{selected_col_for_naming}' transformada para a nova coluna categórica '{new_col_name_for_cat}' com mapeamento {mapping}."
-                            st.session_state['feature_engineering_logs'].append(log_message)
+                            log_feature_engineering_step(log_message)
 
                             st.success(f"Coluna '{selected_col_for_naming}' transformada para a nova coluna categórica '{new_col_name_for_cat}' com sucesso!")
-                            show_col_preview(df_current_session_copy, new_col_name_for_cat)
+                            show_col_preview(df_current, new_col_name_for_cat)
 
                             if st.checkbox(f"Remover a coluna original '{selected_col_for_naming}' após a transformação?", key=key_prefix + "remove_original_col_checkbox_final"):
-                                df_current_session_copy.drop(columns=[selected_col_for_naming], inplace=True)
+                                df_current.drop(columns=[selected_col_for_naming], inplace=True)
                                 log_message_remove = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Coluna original '{selected_col_for_naming}' removida após transformação categórica."
-                                st.session_state['feature_engineering_logs'].append(log_message_remove)
-                                st.session_state.df_processed = df_current_session_copy
+                                log_feature_engineering_step(log_message_remove)
+                                st.session_state.df_processed = df_current
                                 st.info(f"Coluna original '{selected_col_for_naming}' removida.")
 
                             feature_engineered_flag = True
@@ -665,18 +682,18 @@ def show_feature_engineering():
                     try:
                         for comp in components:
                             if comp == "Ano":
-                                df_current_session_copy[f"{selected_date_col}_ano"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.year
+                                df_current[f"{selected_date_col}_ano"] = pd.to_datetime(df_current[selected_date_col]).dt.year
                             elif comp == "Mês":
-                                df_current_session_copy[f"{selected_date_col}_mes"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.month
+                                df_current[f"{selected_date_col}_mes"] = pd.to_datetime(df_current[selected_date_col]).dt.month
                             elif comp == "Dia":
-                                df_current_session_copy[f"{selected_date_col}_dia"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.day
+                                df_current[f"{selected_date_col}_dia"] = pd.to_datetime(df_current[selected_date_col]).dt.day
                             elif comp == "Dia da semana":
-                                df_current_session_copy[f"{selected_date_col}_semana"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.dayofweek
+                                df_current[f"{selected_date_col}_semana"] = pd.to_datetime(df_current[selected_date_col]).dt.dayofweek
                             elif comp == "Hora":
-                                df_current_session_copy[f"{selected_date_col}_hora"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.hour
+                                df_current[f"{selected_date_col}_hora"] = pd.to_datetime(df_current[selected_date_col]).dt.hour
                             elif comp == "Minuto":
-                                df_current_session_copy[f"{selected_date_col}_minuto"] = pd.to_datetime(df_current_session_copy[selected_date_col]).dt.minute
-                        st.session_state["df_processed"] = df_current_session_copy
+                                df_current[f"{selected_date_col}_minuto"] = pd.to_datetime(df_current[selected_date_col]).dt.minute
+                        st.session_state["df_processed"] = df_current
                         st.success("Componentes extraídos com sucesso.")
                         feature_engineered_flag = True
                         st.rerun()
@@ -689,22 +706,26 @@ def show_feature_engineering():
     st.markdown("---")
 
     # PAINEL DE LOGS DE OPERAÇÕES
+        # Histórico de Operações
     with st.expander("📝 Histórico de Operações de Feature Engineering"):
-        if st.session_state['feature_engineering_logs']:
-            # Botão para salvar o log
-            log_content = "\n".join(st.session_state['feature_engineering_logs'])
+        all_logs = st.session_state.get("feature_engineering_logs", [])
+        # Remove entradas automáticas de session_state
+        logs = [log for log in all_logs if "Atualizado session_state" not in log]
+        if logs:
+            # Corrigido: string de nova linha escapada corretamente numa única linha
+            content = "\n".join(reversed(logs))
             st.download_button(
-                label="Salvar Log (.txt)",
-                data=log_content,
-                file_name=f"feature_engineering_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                "Baixar log",
+                data=content,
+                file_name=f"feature_engineering_log_{datetime.now():%Y%m%d_%H%M%S}.txt",
                 mime="text/plain",
-                key="download_feature_engineering_log"
+                key="download_fe_log"
             )
-            st.markdown("---") # Separador para o botão
-            for log in reversed(st.session_state['feature_engineering_logs']): # Mostrar os mais recentes primeiro
-                st.write(log)
+            st.markdown("---")
+            for entry in reversed(logs):
+                st.write(entry)
         else:
-            st.info("Nenhuma operação de engenharia de fatores registrada ainda.")
+            st.info("Nenhuma operação de engenharia de variáveis registrada ainda.")
 
     st.markdown("---")
 

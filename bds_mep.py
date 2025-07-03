@@ -1,11 +1,13 @@
-# mep3.py
+#ok 27/06
 
 import streamlit as st
-st.set_page_config(page_title="Aplicativo de Análises BDS", layout="wide")
+st.set_page_config(page_title="BDs: ambiente integrado de análise de dados", layout="wide")
 
 import pandas as pd
 import numpy as np
 import io
+import zipfile
+from typing import List
 
 from data_cleaning import show_preprocessing_interface
 from feature_engineering import show_feature_engineering
@@ -14,124 +16,181 @@ from model_training import (
     show_linear_regression_model,
     show_logistic_regression_model,
     show_path_analysis_model,
-    show_multilevel_model
 )
 from model_classification_regression import show_machine_learning_page
 from bayesian_analysis import show_bayesian_analysis_page
 from model_multilevel import show_multilevel_model_extended
-
 from model_multilevel_lvl3 import show_multilevel_model_lvl3_full
 from model_multilevel_cross_classified import show_multilevel_model_cross
-from model_l4_extended import show_l4_model 
+from model_l4_extended import show_l4_model
+from multilevel_models import show_multilevel_tabs
+
+# --- Funções Auxiliares ---
+
+def load_data(uploaded_file) -> pd.DataFrame | None:
+    """
+    Carrega CSV ou Excel a partir do arquivo enviado e retorna um DataFrame.
+    Em caso de erro, exibe mensagem de erro e retorna None.
+    """
+    try:
+        if uploaded_file.name.lower().endswith(".csv"):
+            return pd.read_csv(uploaded_file)
+        return pd.read_excel(uploaded_file)
+    except Exception as e:
+        st.sidebar.error(f"Erro ao carregar arquivo: {e}")
+        return None
 
 
+def export_buttons(df: pd.DataFrame) -> None:
+    """
+    Exibe o DataFrame final, os logs de pré-processamento e feature engineering
+    (cada um em seu expander), e gera botões de download para CSV, Excel e ZIP.
+    """
+    # 1) Validação
+    if df is None or df.empty:
+        st.info("Não há dados para exportar. Execute o pré-processamento primeiro.")
+        return
 
+    # 2) Visualização do DataFrame final
+    st.subheader("📊 DataFrame Final")
+    st.dataframe(df)
 
+    # 3) Expanders de históricos
+        # … dentro de export_buttons …
+
+    # 3) Expanders de históricos
+    logs_pre = st.session_state.get("preprocessing_log", [])            
+    all_fe_logs = st.session_state.get("feature_engineering_logs", [])
+    # Filtra só as entradas de feature engineering, excluindo as de session_state
+    logs_fe = [log for log in all_fe_logs if "Atualizado session_state" not in log]
+
+    with st.expander("📝 Histórico de Pré-processamento"):
+        if logs_pre:
+            for entry in logs_pre:
+                st.write(entry)
+        else:
+            st.info("Nenhuma operação de pré-processamento registrada.")
+
+    with st.expander("📝 Histórico de Feature Engineering"):
+        if logs_fe:
+            for entry in logs_fe:
+                st.write(entry)
+        else:
+            st.info("Nenhuma operação de feature engineering registrada.")
+
+    # 4) Construção do ZIP em memória
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        # CSV
+        csv_bytes = df.to_csv(index=False).encode("utf-8")
+        zf.writestr("dados_processados.csv", csv_bytes)
+
+        # Excel
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
+            df.to_excel(writer, index=False, sheet_name="Dados")
+        zf.writestr("dados_processados.xlsx", excel_buffer.getvalue())
+
+        # Logs
+        zf.writestr("preprocessing_log.txt", "\n".join(logs_pre))
+        zf.writestr("feature_engineering_log.txt", "\n".join(logs_fe))
+
+    zip_buffer.seek(0)
+
+    # 5) Botões de download
+    col1, col2, col3 = st.columns([1,1,1])
+    with col1:
+        st.download_button(
+            label="📥 Baixar CSV",
+            data=csv_bytes,
+            file_name="dados_processados.csv",
+            mime="text/csv"
+        )
+    with col2:
+        st.download_button(
+            label="📥 Baixar Excel",
+            data=excel_buffer.getvalue(),
+            file_name="dados_processados.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    with col3:
+        st.download_button(
+            label="📥 Baixar tudo (.zip)",
+            data=zip_buffer.getvalue(),
+            file_name="exportacao_bds.zip",
+            mime="application/zip"
+        )
 # 🔧 Função de reset dos campos interativos de engenharia
+
 def reset_feature_engineering_keys():
-    """Zera campos interativos da seção de engenharia de fatores e outros estados temporários após novo carregamento."""
-    substrings_to_clear = [
-        "transform_to_cat_col_select",
-        "new_categorical_col_name_input",
-        "map_",
-        "remove_original_col_checkbox_final",
-        "selected_cols_for_ops_multiselect",
-        "select_all_for_ops_checkbox",
-        "apply_categorical_transform_button",
-        "rename_",
-        "duplicate_",
+    """Zera estados temporários de engenharia de variáveis."""
+    substrings = [
+        "transform_to_cat_col_select", "new_categorical_col_name_input", "map_",
+        "remove_original_col_checkbox_final", "selected_cols_for_ops_multiselect",
+        "select_all_for_ops_checkbox", "apply_categorical_transform_button",
+        "rename_", "duplicate_",
     ]
-
-    keys_to_reset = [
-        key for key in st.session_state.keys()
-        if any(sub in key for sub in substrings_to_clear)
-    ]
-
-    for key in keys_to_reset:
-        del st.session_state[key]
-
-    for flag in ["run_feature_engineering_rerun", "feature_engineered_flag"]:
-        if flag in st.session_state:
-            del st.session_state[flag]
-
+    for key in list(st.session_state.keys()):
+        if any(sub in key for sub in substrings):
+            del st.session_state[key]
+    for flag in ("run_feature_engineering_rerun", "feature_engineered_flag"):
+        st.session_state.pop(flag, None)
 
 # --- Inicialização do session_state ---
-default_state = {
-    "df_original": None,
-    "df_processed": None,
-    "last_uploaded_file_name": None,
-    "df_loaded_for_processing": False,
-}
-for key, value in default_state.items():
-    st.session_state.setdefault(key, value)
+
+def _init_state():
+    defaults = {
+        "df_original": None,
+        "df_processed": None,
+        "last_uploaded_file_name": None,
+        "df_loaded_for_processing": False,
+    }
+    for key, default in defaults.items():
+        st.session_state.setdefault(key, default)
+
+_init_state()
 
 # --- Barra Lateral: Upload de Dados ---
+
 st.sidebar.header("📁 Upload de Dados")
 uploaded_file = st.sidebar.file_uploader(
     "Escolha um arquivo CSV ou Excel", type=["csv", "xlsx"]
 )
 if uploaded_file:
     if (
-        st.session_state["last_uploaded_file_name"] != uploaded_file.name
+        uploaded_file.name != st.session_state["last_uploaded_file_name"]
         or not st.session_state["df_loaded_for_processing"]
     ):
-        try:
-            if uploaded_file.name.lower().endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
+        df = load_data(uploaded_file)
+        if df is not None:
             st.session_state["df_original"] = df.copy()
             st.session_state["df_processed"] = df.copy()
             st.session_state["last_uploaded_file_name"] = uploaded_file.name
             st.session_state["df_loaded_for_processing"] = True
             reset_feature_engineering_keys()
             st.sidebar.success("Arquivo carregado com sucesso!")
-        except Exception as e:
-            st.sidebar.error(f"Erro ao carregar arquivo: {e}")
-            st.session_state["df_loaded_for_processing"] = False
     else:
         st.sidebar.info("Arquivo já carregado.")
 else:
     if not st.session_state["df_loaded_for_processing"]:
         st.sidebar.info("Aguardando upload de arquivo.")
 
-# --- Barra Lateral: Navegação Principal ---
-st.sidebar.header("🧭 Navegação Principal")
-page = st.sidebar.radio(
-    "Selecione uma seção:",
-    [
-        "🏠 Início",
-        "🧹 Pré-processamento de Dados",
-        "🧪 Engenharia de Variáveis",
-        "📊 Análise Exploratória",
-        "📈 Modelagem Estatística",
-        "🤖 Machine Learning",
-        "🔬 Análise Bayesiana",
-        "📚 Multinível Nível 3",
-        "🔀 Multinível Não Hierárquico",
-        "🔷 Modelo L4",
-        "📤 Exportar"
+# --- Definições das Páginas ---
 
-    ]
-)
-
-# --- Cabeçalho Principal ---
-st.title("📊 Aplicativo de Análises BDS")
-
-# --- Lógica de Navegação ---
-if page == "🏠 Início":
-    st.header("Início")
-    if st.session_state["df_original"] is not None:
+def show_home_page():
+    #st.header("Início")
+    df = st.session_state["df_original"]
+    if df is not None:
         st.subheader("Visão Geral do Dataset")
         st.write("**Arquivo:**", st.session_state["last_uploaded_file_name"])
-        st.write(
-            f"Linhas: {st.session_state['df_original'].shape[0]}, Colunas: {st.session_state['df_original'].shape[1]}"
-        )
-        st.dataframe(st.session_state["df_original"].head())
+        rows, cols = df.shape
+        st.write(f"Linhas: {rows}, Colunas: {cols}")
+        show_all = st.checkbox("Mostrar todas as linhas do DataFrame", key="show_all_rows")
+        st.dataframe(df if show_all else df.head())
     else:
         st.info("Por favor, faça o upload de um arquivo para começar.")
 
-elif page == "🧹 Pré-processamento de Dados":
+def show_preprocessing_page():
     st.header("🧹 Pré-processamento de Dados")
     if st.session_state.get("df_loaded_for_processing"):
         result = show_preprocessing_interface()
@@ -140,82 +199,84 @@ elif page == "🧹 Pré-processamento de Dados":
         elif isinstance(result, tuple) and isinstance(result[0], pd.DataFrame):
             st.session_state["df_processed"] = result[0]
     else:
-        st.warning("Nenhum dado carregado. Por favor, faça upload de um arquivo válido antes de iniciar o pré-processamento.")
+        st.warning("Nenhum dado carregado. Faça upload antes de pré-processar.")
 
-elif page == "🧪 Engenharia de Variáveis":
+def show_feature_engineering_page():
     st.header("🧪 Engenharia de Variáveis")
     if st.session_state.get("df_loaded_for_processing"):
         df_new = show_feature_engineering()
         if isinstance(df_new, pd.DataFrame):
             st.session_state["df_processed"] = df_new
     else:
-        st.warning("Nenhum dado processado disponível para engenharia de variáveis. Por favor, carregue e processe os dados primeiro.")
+        st.warning("Carregue e processe dados antes de engenharia.")
 
-elif page == "📊 Análise Exploratória":
-    st.header("📊 Análise Exploratória")
+def show_exploratory_page():
+    #st.header("📊 Análise Exploratória")
     if isinstance(st.session_state.get("df_processed"), pd.DataFrame):
         show_exploratory_analysis()
     else:
-        st.warning("Nenhum dado processado disponível para análise exploratória. Por favor, carregue e processe os dados primeiro.")
+        st.warning("Processar dados primeiro.")
 
-elif page == "📈 Modelagem Estatística":
+def show_statistical_modeling_page():
     st.header("📈 Modelagem Estatística")
     if isinstance(st.session_state.get("df_processed"), pd.DataFrame):
-        st.subheader("Modelos de Regressão Linear")
+        st.subheader("Regressão Linear")
         show_linear_regression_model()
-        st.subheader("Modelos de Regressão Logística")
+        st.subheader("Regressão Logística")
         show_logistic_regression_model()
         st.subheader("Path Analysis")
         show_path_analysis_model()
-        st.subheader("Modelos Multinível")
-        show_multilevel_model_extended()
     else:
-        st.warning("Nenhum dado processado disponível para modelagem estatística. Por favor, carregue e processe os dados primeiro.")
+        st.warning("Processar dados primeiro.")
 
-elif page == "🤖 Machine Learning":
+def show_ml_page():
     st.header("🤖 Machine Learning")
     if isinstance(st.session_state.get("df_processed"), pd.DataFrame):
         show_machine_learning_page()
     else:
-        st.warning("Nenhum dado processado disponível para machine learning. Por favor, carregue e processe os dados primeiro.")
+        st.warning("Processar dados primeiro.")
 
-elif page == "🔬 Análise Bayesiana":
-    st.header("🔬 Análise Bayesiana")
+def show_bayesian_page():
+    #st.header("🔬 Análise Bayesiana")
     if isinstance(st.session_state.get("df_processed"), pd.DataFrame):
-        show_bayesian_analysis_page(st.session_state["df_processed"])
+        df_for_bayes = st.session_state.get("df_l4", st.session_state["df_processed"])
+        show_bayesian_analysis_page(df_for_bayes)
     else:
-        st.warning("Por favor, carregue e processe os dados antes de acessar esta seção.")
+        st.warning("Processar dados primeiro.")
 
+def show_multilevel_2_3_page():
+    show_multilevel_tabs()
 
-elif page == "📚 Multinível Nível 3":
-    show_multilevel_model_lvl3_full()
-
-elif page == "🔀 Multinível Não Hierárquico":
+def show_cross_classified_page():
+    #st.header("🔀 Multinível Não Hierárquico")
     show_multilevel_model_cross()
 
-elif page == "🔷 Modelo L4":
+def show_l4_page():
+    st.header("🔷 Modelo L4")
     show_l4_model()
 
-elif page == "📤 Exportar":
+def show_export_page():
     st.header("📤 Exportar Dados")
-    df_exp = st.session_state.get("df_processed")
-    if isinstance(df_exp, pd.DataFrame) and not df_exp.empty:
-        st.markdown("### Download dos dados processados")
-        csv = df_exp.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📥 Baixar CSV",
-            csv,
-            file_name="dados_processados.csv",
-            mime="text/csv",
-        )
-        towrite = io.BytesIO()
-        with pd.ExcelWriter(towrite, engine="xlsxwriter") as writer:
-            df_exp.to_excel(writer, index=False, sheet_name="Dados")
-        st.download_button(
-            "📥 Baixar Excel",
-            towrite.getvalue(),
-            file_name="dados_processados.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-    else:
-        st.info("Não há dados para exportar. Execute o pré-processamento primeiro.")
+    export_buttons(st.session_state.get("df_processed"))
+
+# --- Estrutura de Navegação Dinâmica ---
+PAGES = {
+    "🏠 Início": show_home_page,
+    "🧹 Pré-processamento de Dados": show_preprocessing_page,
+    "🧪 Engenharia de Variáveis": show_feature_engineering_page,
+    "📊 Análise Exploratória": show_exploratory_page,
+    "📈 Modelagem Estatística": show_statistical_modeling_page,
+    "🤖 Machine Learning": show_ml_page,
+    "🔬 Análise Bayesiana": show_bayesian_page,
+    "📚 Análise Multinível Níveis 2 e 3": show_multilevel_2_3_page,
+    "🔀 Multinível Não Hierárquico": show_cross_classified_page,
+    "🔷 Modelo L4": show_l4_page,
+    "📤 Exportar": show_export_page,
+}
+
+st.sidebar.header("🧭 Navegação Principal")
+selection = st.sidebar.radio("Selecione uma seção:", list(PAGES.keys()))
+
+# --- Título e Chamada da Página Selecionada ---
+st.title("📊 BDs: ambiente integrado de análise de dados")
+PAGES[selection]()

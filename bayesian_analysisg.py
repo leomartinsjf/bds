@@ -94,7 +94,7 @@ def run_bayesian_regression(df, target, features, draws=2000, tune=1000, chains=
         y_obs = pm.Normal("y_obs", mu=mu, sigma=sigma, observed=y_scaled)
 
         # Amostragem MCMC
-        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True, log_likelihood=True)
+        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True)
 
     # Calculando um Bayes Factor de inclusão (BFIncl) simples
     # Comparando a evidência de cada coeficiente ser positivo versus negativo
@@ -138,7 +138,7 @@ def run_bayesian_ttest(df, num_col, cat_col, draws=2000, tune=1000, chains=4, se
         # Parâmetro de interesse: diferença entre as médias
         diff_of_means = pm.Deterministic("diff", mu1 - mu2)
 
-        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True, log_likelihood=True)
+        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True)
 
     # Calculando um Bayes Factor de inclusão (BFIncl) para a diferença
     # Novamente, uma simplificação: proporção de amostras positivas vs negativas para a diferença
@@ -178,7 +178,7 @@ def run_bayesian_anova(df, num_col, cat_col, draws=2000, tune=1000, chains=4, se
         # Likelihood
         y_obs = pm.Normal("y_obs", mu=mu_groups[group_labels], sigma=sigma_residual, observed=y)
 
-        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True, log_likelihood=True)
+        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True)
 
     # Armazena os nomes dos grupos no idata para plotagem e resumo
     idata.attrs["group_names"] = list(x)
@@ -243,7 +243,7 @@ def run_bayesian_factorial_anova(df, num_col, cat1, cat2, draws=2000, tune=1000,
         # Likelihood
         y_obs = pm.Normal("y_obs", mu=mu_expected, sigma=sigma, observed=y)
 
-        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True, log_likelihood=True)
+        idata = pm.sample(draws=draws, tune=tune, chains=chains, random_seed=seed, return_inferencedata=True)
 
     idata.attrs["cat1_names"] = list(a_codes)
     idata.attrs["cat2_names"] = list(b_codes)
