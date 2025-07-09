@@ -27,6 +27,29 @@ from multilevel_models import show_multilevel_tabs
 
 # --- Funções Auxiliares ---
 
+def limpar_estado_l4():
+    chaves_l4 = [
+        'selected_trocas', 'selected_subjetividades',
+        'selected_relacoes', 'selected_estrutura', 'l4_score_method',
+        'l4_scores_calculated', 'l4x_group_test', 'l4x_test_type_radio',
+        'l4x_model_y', 'l4x_n_clusters', 'l4x_cluster_method_radio',
+        'l4x_cv_y', 'l4x_cv_n_folds'
+    ]
+    for chave in chaves_l4:
+        st.session_state.pop(chave, None)
+
+    # Remove colunas L4 do df_l4 (se existir)
+    # df_processed será limpo diretamente na show_l4_page para garantir
+    # que a cópia passada para show_l4_model seja sempre limpa.
+    if "df_processed" in st.session_state and st.session_state["df_processed"] is not None:
+        df_base = st.session_state["df_processed"].copy()
+        colunas_l4 = ["L4_Trocas", "L4_Subjetividades", "L4_Relacoes", "L4_Estrutura", "Cluster_L4"]
+        df_base = df_base.drop(columns=[c for c in colunas_l4 if c in df_base.columns], errors="ignore")
+        st.session_state["df_l4"] = df_base  # redefine df_l4 a partir de df_processado limpo
+    else:
+        st.session_state["df_l4"] = None
+
+
 def load_data(uploaded_file) -> pd.DataFrame | None:
     """
     Carrega CSV ou Excel a partir do arquivo enviado e retorna um DataFrame.
@@ -59,7 +82,7 @@ def export_buttons(df: pd.DataFrame) -> None:
         # … dentro de export_buttons …
 
     # 3) Expanders de históricos
-    logs_pre = st.session_state.get("preprocessing_log", [])            
+    logs_pre = st.session_state.get("preprocessing_log", [])
     all_fe_logs = st.session_state.get("feature_engineering_logs", [])
     # Filtra só as entradas de feature engineering, excluindo as de session_state
     logs_fe = [log for log in all_fe_logs if "Atualizado session_state" not in log]
@@ -252,8 +275,23 @@ def show_cross_classified_page():
     show_multilevel_model_cross()
 
 def show_l4_page():
-    st.header("🔷 Modelo L4")
-    show_l4_model()
+    # Clean L4 specific session state variables and df_l4
+    limpar_estado_l4()
+
+    if "df_processed" not in st.session_state or st.session_state["df_processed"] is None:
+        st.warning("⚠️ Os dados ainda não foram carregados ou processados.")
+        return
+
+    # Garante que df_main_for_l4 não contenha as colunas L4 de execuções anteriores,
+    # antes de passá-lo para show_l4_model.
+    df_main_for_l4 = st.session_state["df_processed"].copy()
+    l4_score_cols_to_clean = ["L4_Trocas", "L4_Subjetividades", "L4_Relacoes", "L4_Estrutura", "Cluster_L4"]
+    for col in l4_score_cols_to_clean:
+        if col in df_main_for_l4.columns:
+            df_main_for_l4 = df_main_for_l4.drop(columns=[col])
+
+    # Pass the cleaned df_main_for_l4 to the model
+    show_l4_model(df_main_for_l4)
 
 def show_export_page():
     st.header("📤 Exportar Dados")
@@ -279,4 +317,5 @@ selection = st.sidebar.radio("Selecione uma seção:", list(PAGES.keys()))
 
 # --- Título e Chamada da Página Selecionada ---
 st.title("📊 BDs: ambiente integrado de análise de dados")
+st.write("##### Marcos Emanoel Pereira (UFBa/UFS) & Marcus Eugênio O. Lima (UFS)")
 PAGES[selection]()

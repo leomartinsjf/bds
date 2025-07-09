@@ -1,6 +1,6 @@
 #correta 16/06
 
-import io  # Para captura de saída de info()
+import tempfile, zipfile, os
 from contextlib import redirect_stdout  # Para captura de saída de info()
 
 import streamlit as st
@@ -26,6 +26,8 @@ from sklearn.decomposition import PCA  # Para PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from scipy.stats import skew, kurtosis
+
 
 
 # --- Funções Auxiliares para cálculo de tamanho de efeito ---
@@ -408,8 +410,23 @@ def _perform_tukey_hsd(endog_data, groups_data):
 @st.cache_data(show_spinner=False)
 def _perform_games_howell(df, dv_col, between_col):
     """Executa o teste post-hoc Games-Howell."""
-    return pairwise_gameshowell(data=df, dv=dv_col, between=between_col)
-
+    # This line is correct, it passes dv_col to pingouin's dv, etc.
+    return pg.pairwise_gameshowell(data=df, dv=dv_col, between=between_col)
+    with st.spinner("Executando Games-Howell..."):
+        try:
+            gameshowell_result = _perform_games_howell(
+                df=df_anova_results,
+                dv_col=dv_col_results, # <--- ENSURE THIS IS 'dv_col'
+                between_col=selected_posthoc_factor # <--- ENSURE THIS IS 'between_col'
+            )
+            gameshowell_result["Significativo?"] = gameshowell_result["pval"].apply(lambda p: "✅ Sim" if p < 0.05 else "❌ Não")
+            for col in ["diff", "se", "pval", "ci_low", "ci_high"]:
+                if col in gameshowell_result.columns:
+                    gameshowell_result[col] = gameshowell_result[col].round(3)
+            st.markdown("#### Resultados do Games-Howell (com destaque para significância)")
+            st.dataframe(gameshowell_result)
+        except Exception as e:
+            st.error(f"Erro ao executar Games-Howell: {e}")
 
 def show_anova_analysis(df):
     st.subheader("Análise de Variância (ANOVA)")
@@ -635,15 +652,15 @@ def show_anova_analysis(df):
                             with st.spinner("Executando Games-Howell..."):
                                 try:
                                     gameshowell_result = _perform_games_howell(
-                                        df=df_anova_results,
-                                        dv=dv_col_results,
-                                        between=selected_posthoc_factor
-                                    )
+                                    df=df_anova_results,
+                                    dv_col=dv_col_results,
+                                    between_col=selected_posthoc_factor
+)
                                     gameshowell_result["Significativo?"] = gameshowell_result["pval"].apply(lambda p: "✅ Sim" if p < 0.05 else "❌ Não")
                                     for col in ["diff", "se", "pval", "ci_low", "ci_high"]:
                                         if col in gameshowell_result.columns:
                                             gameshowell_result[col] = gameshowell_result[col].round(3)
-                                    st.markdown("#### Resultados do Games-Howell (com destaque para significância)")
+                                    st.markdown("#### Resultados do teste post hoc Games-Howell ")
                                     st.dataframe(gameshowell_result)
                                 except Exception as e:
                                     st.error(f"Erro ao executar Games-Howell: {e}")
@@ -653,8 +670,8 @@ def show_anova_analysis(df):
             if significant_interaction_terms:
                 st.write("---")
                 st.write("#### Interpretação de Interação")
-                st.info("Quando um termo de interação é significativo, a relação de um fator com a variável dependente muda dependendo dos níveis do outro fator. Isso geralmente exige a criação de gráficos de interação.")
-                st.warning("A interpretação de interações é complexa e pode exigir visualizações personalizadas (e.g., gráficos de linha de interação).")
+                st.info("Quando um termo de interação é significativo, a relação de um fator com a variável dependente muda a depender dos níveis do outro fator. Deve ser interpretada com gráficos de interação.")
+                st.warning("A interpretação de interações é complexa e usualmente exigir visualizações específicas.")
 
     st.write("---")
     st.write("#### Gráficos de Visualização dos Grupos")
@@ -1040,7 +1057,6 @@ def show_clustering_analysis(df):
 
             st.success("Coluna 'Cluster_KMeans' adicionada ao DataFrame processado na sessão.")
 
-
 def show_exploratory_analysis():
     key_prefix = "ea_"
     st.header("📊 Análise Exploratória de Dados")
@@ -1064,7 +1080,6 @@ def show_exploratory_analysis():
         st.text(s)
 
     with st.expander("📊 Análise Descritiva dos Dados Numéricos"):
-        key_prefix = "ea_"
         num_cols = df_ea.select_dtypes(include=["number"]).columns.tolist()
 
         if not num_cols:
@@ -1080,10 +1095,7 @@ def show_exploratory_analysis():
             if not selected_num_cols:
                 st.info("Selecione pelo menos uma variável.")
             else:
-                # Describe is usually fast enough not to require caching directly
-                # If performance becomes an issue, this could also be wrapped.
                 desc_df = df_ea[selected_num_cols].describe().T
-
                 desc_df["coef_var"] = desc_df["std"] / desc_df["mean"]
                 desc_df["amplitude"] = desc_df["max"] - desc_df["min"]
                 desc_df["curtose"] = df_ea[selected_num_cols].kurtosis()
@@ -1094,22 +1106,22 @@ def show_exploratory_analysis():
 
                 st.markdown("#### Diagnóstico Interpretativo de Curtose e Assimetria")
                 for var in selected_num_cols:
-                    skew = desc_df.loc[var, "assimetria"]
-                    kurt = desc_df.loc[var, "curtose"]
+                    skew_val = desc_df.loc[var, "assimetria"]
+                    kurt_val = desc_df.loc[var, "curtose"]
 
-                    if abs(skew) < 0.5:
+                    if abs(skew_val) < 0.5:
                         skew_txt = "distribuição aproximadamente simétrica"
-                    elif skew >= 0.5:
+                    elif skew_val >= 0.5:
                         skew_txt = "distribuição assimétrica à direita (cauda longa à direita)"
                     else:
                         skew_txt = "distribuição assimétrica à esquerda (cauda longa à esquerda)"
 
-                    if abs(kurt) < 0.5:
-                        kurt_txt = "curtose próxima da normal (mesocúrtica)"
-                    elif kurt > 0.5:
-                        kurt_txt = "distribuição leptocúrtica (pontuda)"
-                    else:
+                    if kurt_val < -1:
                         kurt_txt = "distribuição platicúrtica (achatada)"
+                    elif -1 <= kurt_val <= 1:
+                        kurt_txt = "curtose próxima da normal (mesocúrtica)"
+                    else:
+                        kurt_txt = "distribuição leptocúrtica (pontuda)"
 
                     st.markdown(f"📌 **{var}**: {skew_txt} e {kurt_txt}.")
 
@@ -1120,6 +1132,64 @@ def show_exploratory_analysis():
                 st.markdown("#### Boxplots")
                 for col in selected_num_cols:
                     st.plotly_chart(px.box(df_ea, y=col, points="all", title=f"Boxplot - {col}"))
+
+
+                st.markdown("#### 📦 Exportar Diagnósticos em .zip")
+
+                def gerar_pacote_diagnosticos():
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        txt_path = os.path.join(tmpdir, "diagnosticos.txt")
+                        with open(txt_path, "w", encoding="utf-8") as f_txt:
+                            for col in selected_num_cols:
+                                data = df_ea[col].dropna()
+
+                                fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+                                sns.histplot(data, kde=True, ax=axes[0])
+                                axes[0].set_title(f"Histograma - {col}")
+                                sns.boxplot(x=data, ax=axes[1])
+                                axes[1].set_title(f"Boxplot - {col}")
+                                plt.tight_layout()
+
+                                fig_path = os.path.join(tmpdir, f"{col}.png")
+                                fig.savefig(fig_path)
+                                plt.close(fig)
+
+                                skew_val = skew(data)
+                                kurt_val = kurtosis(data)
+
+                                if abs(skew_val) < 0.5:
+                                    skew_txt = "distribuição aproximadamente simétrica"
+                                elif skew_val > 0.5:
+                                    skew_txt = "distribuição assimétrica à direita (cauda longa à direita)"
+                                else:
+                                    skew_txt = "distribuição assimétrica à esquerda (cauda longa à esquerda)"
+
+                                if kurt_val < -1:
+                                    kurt_txt = "distribuição platicúrtica (achatada)"
+                                elif -1 <= kurt_val <= 1:
+                                    kurt_txt = "curtose próxima da normal (mesocúrtica)"
+                                else:
+                                    kurt_txt = "distribuição leptocúrtica (pontuda)"
+
+                                diag_text = f"📌 {col}:\n- {skew_txt}\n- {kurt_txt}\n\n"
+                                f_txt.write(diag_text)
+
+                        zip_path = os.path.join(tmpdir, "diagnosticos.zip")
+                        with zipfile.ZipFile(zip_path, "w") as zipf:
+                            for filename in os.listdir(tmpdir):
+                                zipf.write(os.path.join(tmpdir, filename), arcname=filename)
+
+                        with open(zip_path, "rb") as f:
+                            st.download_button(
+                                label="⬇️ Baixar pacote ZIP",
+                                data=f,
+                                file_name="diagnosticos.zip",
+                                mime="application/zip"
+                            )
+
+                if st.button("Gerar pacote com gráficos e interpretações"):
+                    gerar_pacote_diagnosticos()
+
 
     with st.expander("📊 Análise Descritiva dos Dados Categóricos"):
         cat_cols = df_ea.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
