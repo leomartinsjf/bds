@@ -22,7 +22,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc
 from io import StringIO
-shap.initjs()
+# shap.initjs()  # Comentado para compatibilidade com deploy Streamlit
 
 # Modify this line: Add 'df' as an argument
 def show_l4_model(df_main):
