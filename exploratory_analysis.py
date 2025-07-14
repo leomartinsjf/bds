@@ -1,4 +1,4 @@
-#correta 16/06
+# #ok graficos e teste 2 grupos .. falta teste multiplos grupos
 
 import tempfile, zipfile, os
 from contextlib import redirect_stdout  # Para captura de saída de info()
@@ -27,7 +27,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from scipy.stats import skew, kurtosis
-
+from itertools import combinations # Para a função fisher_comparisons_by_pair
 
 
 # --- Funções Auxiliares para cálculo de tamanho de efeito ---
@@ -61,6 +61,72 @@ def calculate_partial_eta_squared(anova_table, effect_term):
     if ss_effect + ss_error == 0: # Evitar divisão por zero se ambos são 0
         return 0.0
     return ss_effect / (ss_effect + ss_error)
+
+
+# --- Função para comparação estatística entre correlações ---
+def compare_grouped_correlations(r1, n1, r2, n2):
+    """
+    Testa se duas correlações independentes são estatisticamente diferentes.
+    Usa transformação de Fisher z.
+    """
+    if n1 < 4 or n2 < 4:
+        return np.nan, np.nan  # tamanho amostral insuficiente
+
+    # Transformação de Fisher
+    z1 = np.arctanh(r1)
+    z2 = np.arctanh(r2)
+
+    # Erro padrão combinado
+    se = np.sqrt(1 / (n1 - 3) + 1 / (n2 - 3))
+    z = (z1 - z2) / se
+    p = 2 * (1 - stats.norm.cdf(abs(z)))  # Teste bicaudal
+    return z, p
+
+def fisher_comparisons_by_pair(df, group_col, num_vars):
+    """
+    Realiza comparações pairwise de correlações entre todos os pares de variáveis numéricas
+    e todos os pares de subgrupos dentro de uma coluna categórica.
+    Retorna um DataFrame com os resultados do teste Z de Fisher.
+    """
+    results = []
+    group_vals = df[group_col].dropna().unique().tolist()
+    if len(group_vals) < 2:
+        return pd.DataFrame()
+
+    for var1, var2 in combinations(num_vars, 2):
+        for g1, g2 in combinations(group_vals, 2):
+            data1 = df[df[group_col] == g1][[var1, var2]].dropna()
+            data2 = df[df[group_col] == g2][[var1, var2]].dropna()
+            n1 = len(data1)
+            n2 = len(data2)
+
+            if n1 < 4 or n2 < 4:
+                continue
+
+            r1 = data1[var1].corr(data1[var2])
+            r2 = data2[var2].corr(data2[var2]) # Bug fix: r2 should use data2[var2] not data2[var1] for second column
+            
+            # Bug fix: r2 was incorrectly using data2[var2].corr(data2[var2]) (correlation of a variable with itself is 1)
+            # It should be data2[var1].corr(data2[var2])
+            r2 = data2[var1].corr(data2[var2])
+
+
+            try:
+                z_score, p_value = compare_grouped_correlations(r1, n1, r2, n2)
+                results.append({
+                    "Var1": var1,
+                    "Var2": var2,
+                    "Grupo 1": g1,
+                    "Grupo 2": g2,
+                    "r1": r1,
+                    "r2": r2,
+                    "z": z_score,
+                    "p": p_value,
+                    "Significativo?": "✅ Sim" if p_value < 0.05 else "❌ Não"
+                })
+            except Exception:
+                continue
+    return pd.DataFrame(results)
 
 
 # --- Funções de Análise Exploratória (Refatoradas para Expander e com Cache) ---
@@ -227,6 +293,8 @@ def _generate_pairplot(df_selected_pair_cols):
 
 
 def show_correlation_matrix_interface(df):
+    import matplotlib.pyplot as plt
+    import seaborn as sns
     st.markdown("### Análise de Correlação Completa")
     st.info("Abaixo estão integradas as análises de Pearson, Spearman, Parcial e por Subgrupos.")
 
@@ -324,6 +392,8 @@ def show_correlation_matrix_interface(df):
         if group_col and len(group_corr_cols) >= 2:
             with st.spinner(f"Calculando correlações por subgrupo para '{group_col}'..."):
                 grouped_corrs = []
+                # Store group sizes to be used in Fisher test
+                group_sizes = {} 
                 for name, group in df.groupby(group_col):
                     try:
                         # Cached call for group correlation
@@ -332,15 +402,96 @@ def show_correlation_matrix_interface(df):
                         corr = corr.stack().reset_index()
                         corr.columns = ["Var1", "Var2", f"r_{name}"]
                         grouped_corrs.append(corr)
+                        group_sizes[name] = len(group)
                     except Exception as e:
                         st.warning(f"Erro no grupo '{name}': {e}")
+                
                 if grouped_corrs:
                     merged = grouped_corrs[0]
                     for other in grouped_corrs[1:]:
                         merged = pd.merge(merged, other, on=["Var1", "Var2"], how="outer")
                     st.dataframe(merged.round(2))
+                    
+                    # Determine number of unique groups (excluding NaN if present, though dropna() above handles it)
+                    num_unique_groups = df[group_col].nunique()
+
+                    if num_unique_groups == 2:
+                        st.markdown("#### Teste de Diferença entre Correlações (Dois Grupos)")
+                        st.info("O teste de Fisher para comparar correlações entre os dois grupos foi executado automaticamente.")
+
+                        try:
+                            r_cols = [col for col in merged.columns if col.startswith("r_")]
+                            group_names = [col.replace("r_", "") for col in r_cols]
+                            
+                            r_df = merged.copy()
+                            r_df["z"], r_df["p"] = zip(*r_df.apply(
+                                lambda row: compare_grouped_correlations(
+                                    row[r_cols[0]],
+                                    group_sizes[group_names[0]], # Use stored group size
+                                    row[r_cols[1]],
+                                    group_sizes[group_names[1]]  # Use stored group size
+                                ), axis=1
+                            ))
+                            r_df["Significativo?"] = r_df["p"].apply(lambda p: "✅ Sim" if p < 0.05 else "❌ Não")
+                            st.dataframe(r_df.round(3))
+                            st.info("Teste de Fisher para comparar se os coeficientes de correlação diferem significativamente entre os dois grupos.")
+                        except Exception as e:
+                            st.error(f"Erro ao comparar correlações entre dois grupos: {e}")
+                    
+                    elif num_unique_groups > 2:
+                        st.markdown("#### Testes de Diferença de Correlação (Múltiplos Subgrupos)")
+                        st.info("Testes de Fisher para diferenças entre os coeficientes de correlação para *todos os pares* de grupos foram executados automaticamente.")
+                        
+                        with st.spinner("Comparando correlações entre todos os pares de grupos..."):
+                            all_fisher_results = fisher_comparisons_by_pair(df, group_col, group_corr_cols)
+                            if not all_fisher_results.empty:
+                                st.markdown("##### Resultados do Teste de Fisher para Diferenças entre Correlações (Todos os Pares de Grupos)")
+                                st.dataframe(all_fisher_results)
+                                st.markdown("""
+                                **Interpretação:**
+                                * **r1 / r2**: Coeficientes de correlação de Pearson para o Grupo 1 e Grupo 2, respectivamente.
+                                * **z**: Valor-Z da transformação de Fisher.
+                                * **p**: Valor-p do teste bicaudal. Se p < 0.05 (ou seu nível de significância escolhido), a diferença entre as correlações é considerada estatisticamente significativa.
+                                * **Significativo?**: Indica se a diferença é estatisticamente significativa ao nível de 0.05.
+                                """)
+                            else:
+                                st.info("Não foi possível realizar comparações de correlação entre subgrupos. Verifique se há dados suficientes em cada grupo (mínimo de 4 observações por grupo para cada par de variáveis).")
+                    else:
+                        st.info("Número insuficiente de grupos únicos na variável categórica para realizar testes de diferença de correlação.")
+                    
+                    # Verificação para plotar regressão para dois pares
+                    if len(group_corr_cols) == 2:
+                        st.markdown("#### Gráfico de Dispersão com Linha de Regressão por Subgrupo")
+
+                        x_col, y_col = group_corr_cols
+                        df_plot = df[[group_col, x_col, y_col]].dropna()
+
+                        if df_plot.empty:
+                            st.warning("Não há dados suficientes após remoção de valores ausentes para o gráfico de dispersão.")
+                        else:
+                            import seaborn as sns
+                            import matplotlib.pyplot as plt
+
+                            fig = sns.lmplot(
+                                data=df_plot,
+                                x=x_col,
+                                y=y_col,
+                                hue=group_col,
+                                height=6,
+                                aspect=1.5,
+                                markers="o",
+                                scatter_kws={"alpha": 0.5},
+                                line_kws={"linewidth": 2}
+                            )
+                            plt.title(f"Regressão Linear de {y_col} vs {x_col} por {group_col}")
+                            st.pyplot(fig)
+                            plt.close(fig.fig)
+                    else:
+                        st.info("Selecione exatamente duas variáveis numéricas para visualizar o gráfico de dispersão com linhas de regressão por subgrupo.")
+
                 else:
-                    st.warning("Não foi possível calcular correlações para os grupos selecionados.")
+                    st.warning("Não foi possível calcular correlações para os grupos selecionados. Verifique se há dados válidos em cada subgrupo.")
+                    
         elif group_col:
             st.info("Selecione ao menos duas variáveis numéricas.")
         elif group_corr_cols:
@@ -412,21 +563,6 @@ def _perform_games_howell(df, dv_col, between_col):
     """Executa o teste post-hoc Games-Howell."""
     # This line is correct, it passes dv_col to pingouin's dv, etc.
     return pg.pairwise_gameshowell(data=df, dv=dv_col, between=between_col)
-    with st.spinner("Executando Games-Howell..."):
-        try:
-            gameshowell_result = _perform_games_howell(
-                df=df_anova_results,
-                dv_col=dv_col_results, # <--- ENSURE THIS IS 'dv_col'
-                between_col=selected_posthoc_factor # <--- ENSURE THIS IS 'between_col'
-            )
-            gameshowell_result["Significativo?"] = gameshowell_result["pval"].apply(lambda p: "✅ Sim" if p < 0.05 else "❌ Não")
-            for col in ["diff", "se", "pval", "ci_low", "ci_high"]:
-                if col in gameshowell_result.columns:
-                    gameshowell_result[col] = gameshowell_result[col].round(3)
-            st.markdown("#### Resultados do Games-Howell (com destaque para significância)")
-            st.dataframe(gameshowell_result)
-        except Exception as e:
-            st.error(f"Erro ao executar Games-Howell: {e}")
 
 def show_anova_analysis(df):
     st.subheader("Análise de Variância (ANOVA)")
@@ -746,7 +882,6 @@ def _perform_paired_ttest(df_paired_col_pre, df_paired_col_post):
     stat, p = stats.ttest_rel(df_paired_col_pre, df_paired_col_post)
     return stat, p # Return serializable values
 
-# ... (rest of the code) ...
 
 def show_t_tests(df):
     st.subheader("Testes T")
@@ -1060,6 +1195,10 @@ def show_clustering_analysis(df):
 def show_exploratory_analysis():
     key_prefix = "ea_"
     st.header("📊 Análise Exploratória de Dados")
+    # Initialize df_processed in session_state if it doesn't exist
+    if 'df_processed' not in st.session_state:
+        st.session_state['df_processed'] = None
+
     if st.session_state['df_processed'] is None or st.session_state['df_processed'].empty:
         st.warning("⚠️ Dados não carregados ou pré-processados. Por favor, complete as etapas anteriores.")
         return
@@ -1251,3 +1390,128 @@ def show_exploratory_analysis():
 
     with st.expander("🔍 Análise de Cluster (K-Means)"):
         show_clustering_analysis(df_ea)
+
+# Main part for Streamlit app
+def app():
+    st.set_page_config(layout="wide", page_title="Análise Exploratória de Dados")
+
+    st.sidebar.title("Navegação")
+    st.sidebar.markdown("""
+        - [Carregar Dados](#carregar-dados)
+        - [Pré-processamento](#pré-processamento-de-dados)
+        - [Análise Exploratória](#análise-exploratória-de-dados)
+    """)
+
+    st.title("Plataforma de Análise de Dados Automatizada")
+
+    # Initialize df_processed in session_state if it doesn't exist
+    if 'df_processed' not in st.session_state:
+        st.session_state['df_processed'] = None
+
+    # Load Data section
+    st.header("1. Carregar Dados")
+    uploaded_file = st.file_uploader("Escolha um arquivo CSV ou Excel", type=["csv", "xlsx"])
+
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith('.csv'):
+                df_raw = pd.read_csv(uploaded_file)
+            else:
+                df_raw = pd.read_excel(uploaded_file)
+            st.session_state['df_raw'] = df_raw.copy()
+            st.success("Dados carregados com sucesso!")
+            st.dataframe(df_raw.head())
+        except Exception as e:
+            st.error(f"Erro ao carregar o arquivo: {e}")
+            st.session_state['df_raw'] = None
+    else:
+        st.info("Aguardando o upload de um arquivo.")
+
+    # Preprocessing Section
+    st.header("2. Pré-processamento de Dados")
+    if 'df_raw' in st.session_state and st.session_state['df_raw'] is not None:
+        df_processed_temp = st.session_state['df_raw'].copy()
+
+        st.subheader("Tratamento de Valores Ausentes")
+        missing_strategy = st.radio(
+            "Selecione a estratégia para valores ausentes:",
+            ("Manter (não fazer nada)", "Remover linhas com NaNs", "Imputar com Média/Moda"),
+            key="missing_strategy"
+        )
+
+        if missing_strategy == "Remover linhas com NaNs":
+            initial_rows = df_processed_temp.shape[0]
+            df_processed_temp.dropna(inplace=True)
+            st.info(f"Removidas {initial_rows - df_processed_temp.shape[0]} linhas com valores ausentes.")
+        elif missing_strategy == "Imputar com Média/Moda":
+            for col in df_processed_temp.columns:
+                if df_processed_temp[col].isnull().any():
+                    if pd.api.types.is_numeric_dtype(df_processed_temp[col]):
+                        df_processed_temp[col].fillna(df_processed_temp[col].mean(), inplace=True)
+                        st.info(f"Coluna '{col}': NaNs imputados com a Média.")
+                    else:
+                        df_processed_temp[col].fillna(df_processed_temp[col].mode()[0], inplace=True)
+                        st.info(f"Coluna '{col}': NaNs imputados com a Moda.")
+        
+        st.subheader("Conversão de Tipos de Dados")
+        st.info("Ajuste os tipos de dados das colunas, se necessário.")
+        
+        cols_to_convert = df_processed_temp.columns.tolist()
+        
+        conversions = {}
+        for col in cols_to_convert:
+            current_dtype = str(df_processed_temp[col].dtype)
+            possible_types = ['object', 'category', 'int64', 'float64', 'bool', 'datetime64[ns]']
+            
+            # Ajustar a lista de opções com base no tipo atual para melhor UX
+            options_for_select = [current_dtype] + [t for t in possible_types if t != current_dtype]
+
+            selected_type = st.selectbox(
+                f"Converter '{col}' de {current_dtype} para:",
+                options=options_for_select,
+                key=f"convert_{col}"
+            )
+            if selected_type != current_dtype:
+                conversions[col] = selected_type
+
+        if st.button("Aplicar Conversões", key="apply_conversions"):
+            for col, dtype in conversions.items():
+                try:
+                    if dtype == 'category':
+                        df_processed_temp[col] = df_processed_temp[col].astype('category')
+                    elif dtype == 'datetime64[ns]':
+                        df_processed_temp[col] = pd.to_datetime(df_processed_temp[col], errors='coerce')
+                    elif dtype == 'bool':
+                        # Converter para booleano de forma mais robusta
+                        df_processed_temp[col] = df_processed_temp[col].apply(
+                            lambda x: True if str(x).lower() in ['true', '1', 'yes'] else 
+                                      (False if str(x).lower() in ['false', '0', 'no'] else np.nan)
+                        ).astype('boolean') # Pandas nullable boolean
+                    else:
+                        df_processed_temp[col] = df_processed_temp[col].astype(dtype)
+                    st.success(f"Coluna '{col}' convertida para '{dtype}'.")
+                except Exception as e:
+                    st.error(f"Erro ao converter '{col}' para '{dtype}': {e}")
+            
+            # Save the processed DataFrame to session state
+            st.session_state['df_processed'] = df_processed_temp.copy()
+            st.dataframe(st.session_state['df_processed'].head())
+            st.success("Pré-processamento concluído!")
+            st.experimental_rerun() # Rerun to update subsequent sections with new dtypes
+
+        # Se não clicou em "Aplicar Conversões" mas já tinha df_processed, mantém
+        # ou se o usuário não fez nada na seção de conversão, mas as imputações foram aplicadas
+        if st.session_state['df_processed'] is None or st.session_state['df_processed'].empty:
+            st.session_state['df_processed'] = df_processed_temp.copy()
+            
+    else:
+        st.info("Carregue os dados na seção 'Carregar Dados' para iniciar o pré-processamento.")
+
+    # Only show exploratory analysis if data is processed
+    if 'df_processed' in st.session_state and st.session_state['df_processed'] is not None and not st.session_state['df_processed'].empty:
+        st.header("3. Análise Exploratória de Dados")
+        show_exploratory_analysis()
+
+# Run the app
+if __name__ == "__main__":
+    app()
