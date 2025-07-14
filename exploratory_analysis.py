@@ -1193,21 +1193,31 @@ def show_clustering_analysis(df):
             st.success("Coluna 'Cluster_KMeans' adicionada ao DataFrame processado na sessão.")
 
 def show_exploratory_analysis():
-    key_prefix = "ea_"
     st.header("📊 Análise Exploratória de Dados")
-    # Initialize df_processed in session_state if it doesn't exist
-    if 'df_processed' not in st.session_state:
-        st.session_state['df_processed'] = None
 
-    if st.session_state['df_processed'] is None or st.session_state['df_processed'].empty:
+    if 'df_processed' not in st.session_state or st.session_state['df_processed'] is None:
         st.warning("⚠️ Dados não carregados ou pré-processados. Por favor, complete as etapas anteriores.")
         return
 
     df_ea = st.session_state['df_processed'].copy()
+    key_prefix = "ea_"
 
-    st.info("Nesta seção, você pode realizar várias análises exploratórias no seu DataFrame processado. Use os expanders abaixo para selecionar o tipo de análise.")
+    st.info("Use as abas abaixo para navegar pelas análises disponíveis.")
 
-    with st.expander("📈 Visualização Geral do DataFrame"):
+    tab_labels = [
+        "👁️ Visão Geral",
+        "📊 Numéricas",
+        "📋 Categóricas",
+        "🔗 Contingência",
+        "🔄 Correlação",
+        "🧪 Testes T",
+        "📈 ANOVA",
+        "🧬 Clustering"
+    ]
+
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
         st.subheader("Visão Geral do DataFrame Processado")
         st.dataframe(df_ea.head())
         st.write(f"Dimensões: {df_ea.shape[0]} linhas, {df_ea.shape[1]} colunas.")
@@ -1215,33 +1225,32 @@ def show_exploratory_analysis():
         st.subheader("Informações sobre as Colunas")
         buffer = pd.io.common.StringIO()
         df_ea.info(buf=buffer)
-        s = buffer.getvalue()
-        st.text(s)
+        st.text(buffer.getvalue())
 
-    with st.expander("📊 Análise Descritiva dos Dados Numéricos"):
+    
+    with tabs[1]:
+        st.subheader("Análise Descritiva de Variáveis Numéricas")
         num_cols = df_ea.select_dtypes(include=["number"]).columns.tolist()
 
         if not num_cols:
             st.info("Nenhuma variável numérica disponível.")
         else:
             selected_num_cols = st.multiselect(
-                "Selecione as variáveis numéricas que deseja explorar:",
+                "Selecione as variáveis numéricas:",
                 options=num_cols,
                 default=[],
                 key=key_prefix + "desc_num_multiselect"
             )
 
-            if not selected_num_cols:
-                st.info("Selecione pelo menos uma variável.")
-            else:
+            if selected_num_cols:
                 desc_df = df_ea[selected_num_cols].describe().T
                 desc_df["coef_var"] = desc_df["std"] / desc_df["mean"]
                 desc_df["amplitude"] = desc_df["max"] - desc_df["min"]
                 desc_df["curtose"] = df_ea[selected_num_cols].kurtosis()
                 desc_df["assimetria"] = df_ea[selected_num_cols].skew()
 
-                st.markdown("#### Estatísticas Descritivas com Indicadores Ampliados")
-                st.dataframe(desc_df)
+                st.markdown("#### Estatísticas Descritivas")
+                st.dataframe(desc_df.round(2))
 
                 st.markdown("#### Diagnóstico Interpretativo de Curtose e Assimetria")
                 for var in selected_num_cols:
@@ -1264,88 +1273,39 @@ def show_exploratory_analysis():
 
                     st.markdown(f"📌 **{var}**: {skew_txt} e {kurt_txt}.")
 
-                st.markdown("#### Histogramas")
                 for col in selected_num_cols:
                     st.plotly_chart(px.histogram(df_ea, x=col, nbins=30, title=f"Histograma - {col}"))
-
-                st.markdown("#### Boxplots")
-                for col in selected_num_cols:
                     st.plotly_chart(px.box(df_ea, y=col, points="all", title=f"Boxplot - {col}"))
 
-
-                st.markdown("#### 📦 Exportar Diagnósticos em .zip")
-
-                def gerar_pacote_diagnosticos():
-                    with tempfile.TemporaryDirectory() as tmpdir:
-                        txt_path = os.path.join(tmpdir, "diagnosticos.txt")
-                        with open(txt_path, "w", encoding="utf-8") as f_txt:
-                            for col in selected_num_cols:
-                                data = df_ea[col].dropna()
-
-                                fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-                                sns.histplot(data, kde=True, ax=axes[0])
-                                axes[0].set_title(f"Histograma - {col}")
-                                sns.boxplot(x=data, ax=axes[1])
-                                axes[1].set_title(f"Boxplot - {col}")
-                                plt.tight_layout()
-
-                                fig_path = os.path.join(tmpdir, f"{col}.png")
-                                fig.savefig(fig_path)
-                                plt.close(fig)
-
-                                skew_val = skew(data)
-                                kurt_val = kurtosis(data)
-
-                                if abs(skew_val) < 0.5:
-                                    skew_txt = "distribuição aproximadamente simétrica"
-                                elif skew_val > 0.5:
-                                    skew_txt = "distribuição assimétrica à direita (cauda longa à direita)"
-                                else:
-                                    skew_txt = "distribuição assimétrica à esquerda (cauda longa à esquerda)"
-
-                                if kurt_val < -1:
-                                    kurt_txt = "distribuição platicúrtica (achatada)"
-                                elif -1 <= kurt_val <= 1:
-                                    kurt_txt = "curtose próxima da normal (mesocúrtica)"
-                                else:
-                                    kurt_txt = "distribuição leptocúrtica (pontuda)"
-
-                                diag_text = f"📌 {col}:\n- {skew_txt}\n- {kurt_txt}\n\n"
-                                f_txt.write(diag_text)
-
-                        zip_path = os.path.join(tmpdir, "diagnosticos.zip")
-                        with zipfile.ZipFile(zip_path, "w") as zipf:
-                            for filename in os.listdir(tmpdir):
-                                zipf.write(os.path.join(tmpdir, filename), arcname=filename)
-
+                if st.button("Exportar Resultados Numéricos Selecionados"):
+                    
+                    zip_path = export_exploratory_results(df_ea, selected_num_cols, [])
+                    if zip_path:
                         with open(zip_path, "rb") as f:
                             st.download_button(
-                                label="⬇️ Baixar pacote ZIP",
+                                label="Baixar ZIP com Resultados",
                                 data=f,
-                                file_name="diagnosticos.zip",
-                                mime="application/zip"
+                                file_name="resultados_numericos.zip"
                             )
+            else:
+                st.info("Selecione ao menos uma variável.")
 
-                if st.button("Gerar pacote com gráficos e interpretações"):
-                    gerar_pacote_diagnosticos()
-
-
-    with st.expander("📊 Análise Descritiva dos Dados Categóricos"):
+    
+    with tabs[2]:
+        st.subheader("Análise Descritiva de Variáveis Categóricas")
         cat_cols = df_ea.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 
         if not cat_cols:
             st.info("Nenhuma variável categórica disponível.")
         else:
             selected_cat_cols = st.multiselect(
-                "Selecione as variáveis categóricas que deseja explorar:",
+                "Selecione as variáveis categóricas:",
                 options=cat_cols,
                 default=[],
                 key=key_prefix + "desc_cat_multiselect"
             )
 
-            if not selected_cat_cols:
-                st.info("Selecione pelo menos uma variável.")
-            else:
+            if selected_cat_cols:
                 for col in selected_cat_cols:
                     st.markdown(f"### 📌 {col}")
 
@@ -1375,23 +1335,36 @@ def show_exploratory_analysis():
                         interpret = f"📌 Distribuição razoavelmente balanceada com {num_unique} categorias. Moda: '{moda}'."
 
                     st.info(interpret)
-           
-    with st.expander("📊 Análise de Contingência e Frequência"):
+
+                if st.button("Exportar Resultados Categóricos Selecionados"):
+                    
+                    zip_path = export_exploratory_results(df_ea, [], selected_cat_cols)
+                    if zip_path:
+                        with open(zip_path, "rb") as f:
+                            st.download_button(
+                                label="Baixar ZIP com Resultados",
+                                data=f,
+                                file_name="resultados_categoricos.zip"
+                            )
+            else:
+                st.info("Selecione ao menos uma variável.")
+
+    with tabs[3]:
         show_contingency_analysis(df_ea)
 
-    with st.expander("🔗 Correlações numéricas"):
+    with tabs[4]:
         show_correlation_matrix_interface(df_ea)
 
-    with st.expander("🧪 Testes T (Uma Amostra, Independentes, Pareadas)"):
+    with tabs[5]:
         show_t_tests(df_ea)
 
-    with st.expander("📈 Análise de Variância (ANOVA)"):
+    with tabs[6]:
         show_anova_analysis(df_ea)
 
-    with st.expander("🔍 Análise de Cluster (K-Means)"):
+    with tabs[7]:
         show_clustering_analysis(df_ea)
 
-# Main part for Streamlit app
+    # Main part for Streamlit app
 def app():
     st.set_page_config(layout="wide", page_title="Análise Exploratória de Dados")
 
@@ -1515,3 +1488,44 @@ def app():
 # Run the app
 if __name__ == "__main__":
     app()
+
+
+def export_exploratory_results(df: pd.DataFrame, numeric_vars: list, categorical_vars: list) -> str:
+    """Exporta os resultados descritivos selecionados para arquivos e retorna o caminho de um .zip."""
+    import os
+    import zipfile
+    from io import BytesIO
+
+    output_dir = "/tmp/export_exploratory"
+    os.makedirs(output_dir, exist_ok=True)
+
+    summary_files = []
+
+    if numeric_vars:
+        desc_df = df[numeric_vars].describe().T
+        desc_df["coef_var"] = desc_df["std"] / desc_df["mean"]
+        desc_df["amplitude"] = desc_df["max"] - desc_df["min"]
+        desc_df["curtose"] = df[numeric_vars].kurtosis()
+        desc_df["assimetria"] = df[numeric_vars].skew()
+        num_path = os.path.join(output_dir, "estatisticas_numericas.csv")
+        desc_df.to_csv(num_path)
+        summary_files.append(num_path)
+
+    if categorical_vars:
+        for var in categorical_vars:
+            freq_abs = df[var].value_counts(dropna=False)
+            freq_rel = df[var].value_counts(normalize=True, dropna=False) * 100
+            freq_df = pd.DataFrame({
+                "Frequência Absoluta": freq_abs,
+                "Frequência Relativa (%)": freq_rel.round(2)
+            })
+            cat_path = os.path.join(output_dir, f"frequencia_{var}.csv")
+            freq_df.to_csv(cat_path)
+            summary_files.append(cat_path)
+
+    zip_path = "/tmp/resultado_exploratorio.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for file in summary_files:
+            zf.write(file, arcname=os.path.basename(file))
+
+    return zip_path
