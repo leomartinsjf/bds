@@ -1,4 +1,4 @@
-#versão com path indireto
+#ok
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -56,7 +56,7 @@ def show_linear_regression_model():
         st.warning("Nenhum dado processado disponível. Por favor, carregue e pré-processe os dados primeiro.")
         return
 
-    with st.expander("Configurar e Executar Regressão Linear", expanded=False):
+    if True:  # conteúdo da aba Regressão Linear
         df = st.session_state.df_processed.copy()
         numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
@@ -195,274 +195,89 @@ def show_linear_regression_model():
 
 
 def show_logistic_regression_model():
-    st.subheader("📊 Regressão Logística")
-    st.info("Utilize a Regressão Logística para prever uma variável dependente categórica binária (0 ou 1, sim/não) com base em uma ou mais variáveis independentes.")
+    st.subheader("📊 Regressão Logística (com sklearn)")
+    st.info("Use regressão logística para prever uma variável binária. Esta versão usa regularização para evitar erros numéricos comuns.")
 
     if 'df_processed' not in st.session_state or st.session_state.df_processed is None or st.session_state.df_processed.empty:
-        st.warning("Nenhum dado processado disponível. Por favor, carregue e pré-processe os dados primeiro.")
+        st.warning("Nenhum dado processado disponível.")
         return
 
-    with st.expander("Configurar e Executar Regressão Logística", expanded=False):
-        df = st.session_state.df_processed.copy()
-        all_cols = df.columns.tolist()
-        binary_cols = [col for col in all_cols if df[col].nunique() == 2 and df[col].dropna().isin([0, 1]).all()]
+    df = st.session_state.df_processed.copy()
+    all_cols = df.columns.tolist()
+    binary_cols = [col for col in all_cols if df[col].nunique() == 2 and df[col].dropna().isin([0, 1]).all()]
 
-        if not binary_cols:
-            st.warning("Não há colunas binárias (0 ou 1) no DataFrame para a variável dependente.")
-            return
+    if not binary_cols:
+        st.warning("Nenhuma variável binária disponível para regressão.")
+        return
 
-        st.markdown("---")
-        st.markdown("#### Configuração do Modelo de Regressão Logística")
+    st.markdown("#### Configuração")
+    dependent_var = st.selectbox(
+        "Variável dependente binária:",
+        options=binary_cols,
+        index=None,
+        placeholder="Selecione uma variável binária..."
+    )
 
-        st.markdown("##### 1. Selecione a Variável Dependente (Y - Binária)")
-        dependent_var = st.selectbox(
-            "Escolha a variável binária (0 ou 1) a ser prevista:",
-            options=[""] + binary_cols,
-            index=0
-        )
-        if dependent_var == "":
-            st.warning("Por favor, selecione uma variável dependente binária.")
-            return
+    independent_vars = st.multiselect("Variáveis preditoras:", options=[col for col in all_cols if col != dependent_var])
 
-        st.markdown("##### 2. Selecione as Variáveis Independentes (X)")
-        options_independent_vars = [col for col in all_cols if col != dependent_var]
-        independent_vars = st.multiselect(
-            "Escolha uma ou mais variáveis para prever a variável dependente:",
-            options=options_independent_vars,
-            default=[]
-        )
-        if not independent_vars:
-            st.warning("Por favor, selecione pelo menos uma variável independente.")
-            return
+    if not independent_vars:
+        st.warning("Selecione ao menos uma variável preditora.")
+        return
 
-        if st.button("Executar Regressão Logística", key="run_logr_model"):
-            with st.spinner("Treinando Modelo de Regressão Logística..."):
-                try:
-                    model_vars = [dependent_var] + independent_vars
-                    df_model = df[model_vars].dropna()
+    if st.button("Executar Regressão Logística"):
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.pipeline import Pipeline
+        from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+        import seaborn as sns
+        import matplotlib.pyplot as plt
 
-                    if df_model.empty:
-                        st.error("Não há dados suficientes após o tratamento de NaN para construir o modelo.")
-                        return
+        X = df[independent_vars].copy()
+        Y = df[dependent_var]
 
-                    X = df_model[independent_vars]
-                    for col in X.columns:
-                        if pd.api.types.is_categorical_dtype(X[col]) or pd.api.types.is_object_dtype(X[col]):
-                            X = pd.get_dummies(X, columns=[col], drop_first=True, dtype=int)
+        # Converte variáveis categóricas
+        X = pd.get_dummies(X, drop_first=True)
 
-                    Y = df_model[dependent_var]
-                    X = sm.add_constant(X, prepend=False)
+        pipeline = Pipeline([
+            ('scaler', StandardScaler()),
+            ('logreg', LogisticRegression(solver='lbfgs', max_iter=1000))
+        ])
 
-                    model = sm.GLM(Y, X, family=sm.families.Binomial())
-                    results = model.fit()
+        try:
+            pipeline.fit(X, Y)
+            st.success("Modelo treinado com sucesso.")
 
-                    st.markdown("---")
-                    st.subheader("Resultados da Regressão Logística")
-                    st.write("#### Sumário do Modelo (Statsmodels GLM - Logística)")
-                    st.code(results.summary().as_text())
+            st.markdown("#### Coeficientes e Odds Ratio:")
+            coef = pipeline.named_steps['logreg'].coef_[0]
+            coef_df = pd.DataFrame({
+                'Variável': X.columns,
+                'Coeficiente': coef,
+                'Odds Ratio': np.exp(coef)
+            }).round(4)
+            st.dataframe(coef_df)
 
-                    # Tabela de coeficientes, odds ratio, IC95% e p-valor
-                    st.write("#### Tabela de Coeficientes e Odds Ratios")
-                    coef = results.params
-                    conf = results.conf_int()
-                    conf.columns = ['IC 2.5%', 'IC 97.5%']
-                    or_df = pd.DataFrame({
-                        'Coeficiente': coef,
-                        'Odds Ratio': np.exp(coef),
-                        'IC 2.5%': np.exp(conf['IC 2.5%']),
-                        'IC 97.5%': np.exp(conf['IC 97.5%']),
-                        'P-valor': results.pvalues
-                    })
-                    st.dataframe(or_df.round(4))
-                    st.info("Odds Ratios representam o fator multiplicativo da chance de ocorrência do evento para cada unidade de aumento na variável.")
+            st.markdown("#### Avaliação do Modelo:")
+            preds = pipeline.predict(X)
+            probas = pipeline.predict_proba(X)[:, 1]
+            auc = roc_auc_score(Y, probas)
+            st.metric("AUC", value=f"{auc:.3f}")
 
-                    # Coeficientes padronizados (com variáveis normalizadas)
-                    st.write("#### Coeficientes Padronizados (Z-score)")
-                    scaler = StandardScaler()
-                    df_scaled = pd.DataFrame(scaler.fit_transform(df_model), columns=model_vars)
-                    X_std = df_scaled[independent_vars]
-                    Y_std = df_scaled[dependent_var]
-                    X_std = sm.add_constant(X_std, prepend=False)
-                    model_std = sm.GLM(Y_std, X_std, family=sm.families.Binomial())
-                    results_std = model_std.fit()
-                    st.dataframe(results_std.summary2().tables[1].round(4))
-                    st.info("Esses coeficientes permitem comparar a influência relativa das variáveis na escala padronizada.")
+            st.markdown("#### Relatório de Classificação:")
+            report = classification_report(Y, preds, output_dict=True)
+            st.dataframe(pd.DataFrame(report).T.round(3))
 
-                    # Diagnóstico de multicolinearidade
-                    st.write("#### Fatores de Inflação da Variância (VIF)")
-                    from statsmodels.stats.outliers_influence import variance_inflation_factor
-                    vif_data = pd.DataFrame()
-                    vif_data['Variável'] = X.columns
-                    vif_data['VIF'] = [variance_inflation_factor(X.values, i) for i in range(X.shape[1])]
-                    st.dataframe(vif_data.round(2))
-                    st.info("VIF > 5 sugere multicolinearidade moderada; VIF > 10 é preocupante.")
+            st.markdown("#### Matriz de Confusão:")
+            fig, ax = plt.subplots()
+            sns.heatmap(confusion_matrix(Y, preds), annot=True, fmt='d', cmap='Blues', ax=ax)
+            ax.set_xlabel("Predito")
+            ax.set_ylabel("Real")
+            st.pyplot(fig)
 
-                    st.write("#### Métricas de Avaliação")
-                    predictions_proba = results.predict(X)
-                    threshold = st.slider("Selecione o Ponto de Corte (Threshold) para Classificação:", 0.0, 1.0, 0.5, 0.01)
-                    predictions_class = (predictions_proba >= threshold).astype(int)
-
-                    accuracy = accuracy_score(Y, predictions_class)
-                    precision = precision_score(Y, predictions_class)
-                    recall = recall_score(Y, predictions_class)
-                    f1 = f1_score(Y, predictions_class)
-                    auc_score = roc_auc_score(Y, predictions_proba)
-                    cm = confusion_matrix(Y, predictions_class)
-
-                    st.write(f"**Acurácia:** `{accuracy:.4f}`")
-                    st.write(f"**Precisão:** `{precision:.4f}`")
-                    st.write(f"**Recall:** `{recall:.4f}`")
-                    st.write(f"**F1-Score:** `{f1:.4f}`")
-                    st.write(f"**AUC (Area Under ROC Curve):** `{auc_score:.4f}`")
-
-                    st.write("##### Matriz de Confusão:")
-                    fig_cm, ax_cm = plt.subplots(figsize=(6, 6))
-                    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax_cm,
-                                xticklabels=['Predito 0', 'Predito 1'], yticklabels=['Real 0', 'Real 1'])
-                    ax_cm.set_xlabel("Predito")
-                    ax_cm.set_ylabel("Real")
-                    ax_cm.set_title("Matriz de Confusão")
-                    st.pyplot(fig_cm)
-                    plt.close(fig_cm)
-
-                    st.write("##### Curva ROC")
-                    fpr, tpr, _ = roc_curve(Y, predictions_proba)
-                    fig_roc, ax_roc = plt.subplots(figsize=(8, 6))
-                    ax_roc.plot(fpr, tpr, label=f'AUC = {auc_score:.2f}')
-                    ax_roc.plot([0, 1], [0, 1], 'r--', label='Linha de Referência')
-                    ax_roc.set_xlabel("Taxa de Falso Positivo (FPR)")
-                    ax_roc.set_ylabel("Taxa de Verdadeiro Positivo (TPR)")
-                    ax_roc.set_title("Curva Característica de Operação do Receptor (ROC)")
-                    ax_roc.legend()
-                    st.pyplot(fig_roc)
-                    plt.close(fig_roc)
-
-                except Exception as e:
-                    st.error(f"Erro ao executar a Regressão Logística: {e}")
+        except Exception as e:
+            st.error(f"Erro ao ajustar o modelo: {e}")
 
 
-# def show_multilevel_model():
-#     # Garante que os campos comecem sempre limpos, apenas uma vez
-#     if "mlm_reset" not in st.session_state:
-#         st.session_state["mlm_dependent"] = ""
-#         st.session_state["mlm_group"] = ""
-#         st.session_state["mlm_reset"] = True
-#     st.subheader("🌳 Análise Multinível (Modelos Lineares Mistos)")
-#     st.info("Utilize a Análise Multinível para modelar dados com estrutura hierárquica ou aninhada (ex: estudantes em escolas, pacientes em hospitais).")
-#     st.info("Esta análise permite que os efeitos das variáveis variem entre os diferentes grupos.")
 
-#     if 'df_processed' not in st.session_state or st.session_state.df_processed is None or st.session_state.df_processed.empty:
-#         st.warning("Nenhum dado processado disponível. Por favor, carregue e pré-processe os dados primeiro.")
-#         return
-
-#     with st.expander("Configurar e Executar Análise Multinível", expanded=False):
-        
-#         df = st.session_state.df_processed.copy()
-#         numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
-#         categorical_cols = df.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
-#         all_cols = df.columns.tolist()
-
-#         st.markdown("---")
-#         st.markdown("#### Configuração do Modelo Multinível")
-
-#         dependent_var = st.selectbox(
-#             "Escolha a variável contínua a ser prevista:",
-#             options=[""] + numeric_cols,
-#             index=0
-#         )
-#         if dependent_var == "":
-#             dependent_var = None
-
-#         group_var = st.selectbox(
-#             "Escolha a variável categórica que define os grupos (nível superior):",
-#             options=[""] + categorical_cols,
-#             index=0
-#         )
-#         if group_var == "":
-#             group_var = None
-
-#         options_fixed_effects = [col for col in all_cols if col != dependent_var and col != group_var]
-#         fixed_effects_vars = st.multiselect("Escolha as variáveis preditoras (efeitos fixos):", options=options_fixed_effects, default=[], key="mlm_fixed_effects")
-
-#         random_effects_options = ["Intercepto Aleatório"] + [col for col in fixed_effects_vars if col in numeric_cols]
-#         selected_random_effects = st.multiselect(
-#             "Escolha os efeitos aleatórios:",
-#             options=random_effects_options,
-#             default=["Intercepto Aleatório"],
-#             key="mlm_random_effects"
-#         )
-
-#         if not dependent_var or not group_var or not selected_random_effects:
-#             st.info("Por favor, selecione a variável dependente, a de agrupamento e ao menos um efeito aleatório.")
-#             return
-
-#         if st.button("Executar Análise Multinível", key="run_mlm_model"):
-#             st.session_state["reset_multilevel_form"] = True
-#             with st.spinner("Treinando Modelo Multinível..."):
-#                 try:
-#                     model_vars = [dependent_var, group_var] + fixed_effects_vars
-#                     for re_var in selected_random_effects:
-#                         if re_var != "Intercepto Aleatório" and re_var not in model_vars:
-#                             model_vars.append(re_var)
-
-#                     df_model = df[model_vars].dropna()
-#                     if not pd.api.types.is_categorical_dtype(df_model[group_var]):
-#                         df_model[group_var] = df_model[group_var].astype('category')
-
-#                     fixed_part = " + ".join(fixed_effects_vars) if fixed_effects_vars else "1"
-
-#                     random_part = []
-#                     if "Intercepto Aleatório" in selected_random_effects:
-#                         random_part.append("1")
-#                     for var in selected_random_effects:
-#                         if var != "Intercepto Aleatório" and var in numeric_cols:
-#                             random_part.append(var)
-#                     re_formula = "~ " + " + ".join(random_part)
-
-#                     formula = f"{dependent_var} ~ {fixed_part}"
-#                     model = mixedlm(formula=formula, data=df_model, re_formula=re_formula, groups=df_model[group_var])
-#                     results = model.fit()
-
-#                     st.markdown("---")
-#                     st.subheader("Resultados do Modelo Multinível")
-#                     st.write("#### Sumário Completo do Modelo (Statsmodels MixedLM)")
-#                     st.code(results.summary().as_text())
-
-#                     st.subheader("Variância e Desvio Padrão dos Componentes do Modelo")
-
-#                     if hasattr(results, 'vc_params') and results.vc_params is not None and not results.vc_params.empty:
-#                         st.write("##### Variância e Desvio Padrão dos Efeitos Aleatórios por Componente")
-#                         vc_df = results.vc_params.to_frame(name='Variância Estimada')
-#                         vc_df['Desvio Padrão Estimado'] = np.sqrt(vc_df['Variância Estimada'])
-#                         st.dataframe(vc_df)
-#                     else:
-#                         st.info("Não foi possível extrair a variância de efeitos aleatórios explicitamente.")
-
-#                     st.write("##### Variância e Desvio Padrão do Termo de Erro (Residual)")
-#                     st.write(f"Variância Residual (Scale): `{results.scale:.4f}`")
-#                     st.write(f"Desvio Padrão Residual (Scale): `{np.sqrt(results.scale):.4f}`")
-
-#                     st.subheader("Visualização dos Efeitos Aleatórios Estimados por Grupo")
-#                     random_effects_df = pd.DataFrame(results.random_effects).T
-
-#                     if not random_effects_df.empty:
-#                         st.write("Tabela de Efeitos Aleatórios Estimados (Primeiras 5 Linhas):")
-#                         st.dataframe(random_effects_df.head())
-
-#                         for effect_name in random_effects_df.columns:
-#                             fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-#                             sns.histplot(random_effects_df[effect_name], kde=True, ax=axes[0])
-#                             axes[0].set_title(f"Distribuição do Efeito Aleatório: {effect_name}")
-#                             sns.boxplot(x=random_effects_df[effect_name], ax=axes[1])
-#                             axes[1].set_title(f"Box Plot do Efeito Aleatório: {effect_name}")
-#                             plt.tight_layout()
-#                             st.pyplot(fig)
-#                             plt.close(fig)
-#                     else:
-#                         st.info("Nenhum efeito aleatório estimado para visualizar ou o modelo não convergiu adequadamente.")
-
-#                 except Exception as e:
-#                     st.error(f"Erro ao executar a análise multinível: {e}")
 
 
 # --- FUNÇÃO PARA ANÁLISE DE CAMINHO (PATH ANALYSIS) com Statsmodels e cálculo manual ---
@@ -474,7 +289,7 @@ def show_path_analysis_model():
         st.warning("Nenhum dado processado disponível. Por favor, carregue e pré-processe os dados primeiro.")
         return
 
-    with st.expander("Configurar e Executar Análise de Caminhos", expanded=False):
+    if True:  # conteúdo da aba Análise de Caminhos
         df = st.session_state.df_processed.copy()
         numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
@@ -768,3 +583,18 @@ def show_path_analysis_model():
                 file_name="modelo_caminhos.csv",
                 mime="text/csv"
             )
+
+
+def show_model_training():
+    st.title("🔧 Modelagem Preditiva")
+
+    tab1, tab2, tab3 = st.tabs(["📈 Regressão Linear", "📊 Regressão Logística", "🕸️ Análise de Caminhos"])
+
+    with tab1:
+        show_linear_regression_model()
+
+    with tab2:
+        show_logistic_regression_model()
+
+    with tab3:
+        show_path_analysis_model()

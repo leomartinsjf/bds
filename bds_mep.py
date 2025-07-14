@@ -1,4 +1,4 @@
-#ok 27/06
+#ok 09/07
 
 import streamlit as st
 st.set_page_config(page_title="BDs: ambiente integrado de análise de dados", layout="wide")
@@ -12,11 +12,7 @@ from typing import List
 from data_cleaning import show_preprocessing_interface
 from feature_engineering import show_feature_engineering
 from exploratory_analysis import show_exploratory_analysis
-from model_training import (
-    show_linear_regression_model,
-    show_logistic_regression_model,
-    show_path_analysis_model,
-)
+from model_training import show_model_training
 from model_classification_regression import show_machine_learning_page
 from bayesian_analysis import show_bayesian_analysis_page
 from model_multilevel import show_multilevel_model_extended
@@ -244,11 +240,8 @@ def show_statistical_modeling_page():
     st.header("📈 Modelagem Estatística")
     if isinstance(st.session_state.get("df_processed"), pd.DataFrame):
         st.subheader("Regressão Linear")
-        show_linear_regression_model()
-        st.subheader("Regressão Logística")
-        show_logistic_regression_model()
-        st.subheader("Path Analysis")
-        show_path_analysis_model()
+        show_model_training()
+
     else:
         st.warning("Processar dados primeiro.")
 
